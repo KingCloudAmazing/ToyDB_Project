@@ -56,9 +56,10 @@ int SP_IsValidPage(const char *page);
  * Insert a non-empty record into a page.
  *
  * On success, *slot_out receives a zero-based slot number.
- * On a full page, SP_ERR_PAGE_FULL is returned and the page is unchanged.
- * This first-stage implementation does not yet reuse deleted slots because
- * deletion and compaction are implemented in a later stage.
+ * Deleted slot descriptors are reused before a new slot is appended.
+ * If contiguous space is insufficient but compaction can make the record fit,
+ * SP_InsertRecord() compacts the page and retries automatically.
+ * If the record cannot fit even after compaction, SP_ERR_PAGE_FULL is returned.
  */
 int SP_InsertRecord(char *page,
                     const void *record,
@@ -66,7 +67,7 @@ int SP_InsertRecord(char *page,
                     uint16_t *slot_out);
 
 /*
- * Copy a record out of a page by its zero-based slot number.
+ * Retrive live record from a page by its zero-based slot number.
  * The caller supplies an output buffer and its capacity.
  * *record_length_out is set to the stored record length on success.
  */
@@ -75,6 +76,12 @@ int SP_GetRecord(const char *page,
                  void *output,
                  uint16_t output_capacity,
                  uint16_t *record_length_out);
+
+// Mark a slot as deleted however the slot number is retained
+int SP_DeleteRecord(char *page, uint16_t slot_num);
+
+// Pack all live records together (Compaction), while preserving slot numbers and slot count. */
+int SP_CompactPage(char *page);
 
 /* Read-only page metadata helpers. */
 int SP_GetSlotCount(const char *page, uint16_t *slot_count_out);
