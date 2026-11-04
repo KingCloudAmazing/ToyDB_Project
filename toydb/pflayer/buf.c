@@ -17,6 +17,7 @@ int PFbufPolicy = PF_LRU;
 
 /* Buffer statistics */
 long PFlogicalReads = 0;
+long PFlogicalWrites = 0;
 long PFphysicalReads = 0;
 long PFphysicalWrites = 0;
 long PFbufferHits = 0;
@@ -279,7 +280,8 @@ GLOBAL VARIABLES MODIFIED:
 {
 PFbpage *bpage;	/* pointer to buffer */
 int error;
-PFlogicalReads++;
+
+	*fpage = NULL;
 
 	if ((bpage=PFhashFind(fd,pagenum)) == NULL){
 		/* page not in buffer. */
@@ -300,6 +302,7 @@ PFlogicalReads++;
 			*fpage = NULL;
 			return(error);
 		}
+		PFphysicalReads++;
 
 		/* insert new page into hash table */
 		if ((error=PFhashInsert(fd,pagenum,bpage))!=PFE_OK){
@@ -316,7 +319,6 @@ PFlogicalReads++;
 		bpage->dirty = FALSE;
 	}
 	else{
-		PFbufferHits++;
 	 if (bpage->fixed){
 		/* page already in memory, and is fixed, so we can't
 		get it again. */
@@ -324,11 +326,13 @@ PFlogicalReads++;
 		PFerrno = PFE_PAGEFIXED;
 		return(PFerrno);
 	}
+	PFbufferHits++;
  }
 
 	/* Fix the page in the buffer then return*/
 	bpage->fixed = TRUE;
 	*fpage = &bpage->fpage;
+	PFlogicalReads++;
 	return(PFE_OK);
 }
 
@@ -364,9 +368,10 @@ PFbpage *bpage;
 		return(PFerrno);
 	}
 
-	if (dirty)
-		/* mark this page dirty */
+	if (dirty) {
 		bpage->dirty = TRUE;
+		PFlogicalWrites++;
+	}
 	
 	/* unfix the page */
 	bpage->fixed = FALSE;
@@ -566,21 +571,22 @@ PFbpage *bpage;
 void PFbufResetStats()
 {
     PFlogicalReads = 0;
+    PFlogicalWrites = 0;
     PFphysicalReads = 0;
     PFphysicalWrites = 0;
     PFbufferHits = 0;
 }
 
-void PFbufGetStats(logical, physicalReads, physicalWrites, hits)
-long *logical;
-long *physicalReads;
-long *physicalWrites;
-long *hits;
+void PFbufGetStats(PFBufferStats *stats)
 {
-    *logical = PFlogicalReads;
-    *physicalReads = PFphysicalReads;
-    *physicalWrites = PFphysicalWrites;
-    *hits = PFbufferHits;
+    if (stats == NULL)
+        return;
+
+    stats->logicalReads = PFlogicalReads;
+    stats->logicalWrites = PFlogicalWrites;
+    stats->physicalReads = PFphysicalReads;
+    stats->physicalWrites = PFphysicalWrites;
+    stats->bufferHits = PFbufferHits;
 }
 
 void PFbufPrintStats()
@@ -591,9 +597,10 @@ void PFbufPrintStats()
         hitRatio = (double)PFbufferHits / PFlogicalReads;
 
     printf("Buffer statistics:\n");
-    printf("logical reads    : %ld\n", PFlogicalReads);
-    printf("physical reads   : %ld\n", PFphysicalReads);
-    printf("physical writes  : %ld\n", PFphysicalWrites);
-    printf("buffer hits      : %ld\n", PFbufferHits);
-    printf("hit ratio        : %.4f\n", hitRatio);
+    printf("Logical reads    : %ld\n", PFlogicalReads);
+    printf("Logical writes   : %ld\n", PFlogicalWrites);
+    printf("Physical reads   : %ld\n", PFphysicalReads);
+    printf("Physical writes  : %ld\n", PFphysicalWrites);
+    printf("Buffer hits      : %ld\n", PFbufferHits);
+    printf("Hit ratio        : %.4f\n", hitRatio);
 }

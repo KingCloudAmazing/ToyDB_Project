@@ -49,14 +49,23 @@ extern int PFbufSetCapacity(int capacity);
 extern int PFbufSetPolicy(int policy);
 
 /* Buffer statistics */
+typedef struct {
+    long logicalReads;
+    long logicalWrites;
+    long physicalReads;
+    long physicalWrites;
+    long bufferHits;
+} PFBufferStats;
+
 extern long PFlogicalReads;
+extern long PFlogicalWrites;
 extern long PFphysicalReads;
 extern long PFphysicalWrites;
 extern long PFbufferHits;
 
-extern void PFbufResetStats();
-extern void PFbufGetStats();
-extern void PFbufPrintStats();
+extern void PFbufResetStats(void);
+extern void PFbufGetStats(PFBufferStats *stats);
+extern void PFbufPrintStats(void);
 
 /* buffer page decl */
 typedef struct PFbpage {
