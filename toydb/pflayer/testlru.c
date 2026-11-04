@@ -80,6 +80,42 @@ int main()
         return 1;
     }
 
+    /* Test strict LRU with reverse-order unfixing */
+
+    /* Access pages in order 0 -> 1 -> 3, keeping them fixed */
+    check(PF_GetThisPage(fd, 0, &pagebuf), "access page 0");
+    check(PF_GetThisPage(fd, 1, &pagebuf), "access page 1");
+    check(PF_GetThisPage(fd, 3, &pagebuf), "access page 3");
+
+    /* Unfix in reverse order: 3 -> 1 -> 0 */
+    check(PF_UnfixPage(fd, 3, FALSE), "unfix page 3");
+    check(PF_UnfixPage(fd, 1, FALSE), "unfix page 1");
+    check(PF_UnfixPage(fd, 0, FALSE), "unfix page 0");
+
+    /* Allocate another page, forcing an eviction */
+    check(PF_AllocPage(fd, &pagenum, &pagebuf),
+          "allocate next page");
+
+    check(PF_UnfixPage(fd, pagenum, FALSE),
+          "unfix new page");
+
+    /* Page 0 should have been evicted */
+    PFbufResetStats();
+
+    check(PF_GetThisPage(fd, 0, &pagebuf),
+          "access page 0 again");
+
+    PFbufGetStats(&stats);
+
+    if (stats.physicalReads == 1) {
+        printf("PASS: strict LRU correctly evicted page 0\n");
+    } else {
+        printf("FAILED: strict LRU did not evict page 0\n");
+        return 1;
+    }
+
+    check(PF_UnfixPage(fd, 0, FALSE), "unfix page 0");
+
     check(PF_CloseFile(fd), "close file");
     check(PF_DestroyFile(TEST_FILE), "destroy file");
 
