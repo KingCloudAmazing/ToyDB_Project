@@ -8,9 +8,13 @@ PF_CFLAGS = -std=gnu89 -D_DEFAULT_SOURCE -fno-builtin -w
 SP_PF_SRC = slotted_page.c student_store.c
 STUDENT_FILE = ../../data/student.txt
 
-.PHONY: all test-basic test-student test-phase2 test clean clean-phase2 test-pf test-pf-phase3 test-student-pf test-scan test-scan-dataset
+# static page:
+SR_PF_SRC = static_page.c static_store.c
+STATIC_MAX_LENGTH ?= 128
 
-all: test_slotted test_student_dataset test_slotted_phase2 test_pf_integration test_pf_phase3 test_student_pf test_student_scan test_student_scan_dataset
+.PHONY: all test-basic test-student test-phase2 test clean clean-phase2 test-pf test-pf-phase3 test-student-pf test-scan test-scan-dataset test-static-page test-static-pf test-static-pf-all
+
+all: test_slotted test_student_dataset test_slotted_phase2 test_pf_integration test_pf_phase3 test_student_pf test_student_scan test_student_scan_dataset test_static_page test_static_pf
 
 test_slotted: slotted_page.c slotted_page.h test_slotted.c
 	$(CC) $(CFLAGS) $(SANFLAGS) slotted_page.c test_slotted.c -o $@
@@ -35,6 +39,14 @@ test_student_scan: $(SP_PF_SRC) test_student_scan.c slotted_page.h student_store
 
 test_student_scan_dataset: $(SP_PF_SRC) test_student_scan_dataset.c slotted_page.h student_store.h pf_api.h rid.h
 	$(CC) $(CFLAGS) $(PF_CFLAGS) -I$(PF_DIR) $(SP_PF_SRC) $(PF_SRC) test_student_scan_dataset.c -o $@
+
+# Page-level static-slot tests (no PF dependency).
+test_static_page: static_page.c static_page.h test_static_page.c
+	$(CC) $(CFLAGS) $(SANFLAGS) static_page.c test_static_page.c -o $@
+
+# PF-backed storage test; legacy PF sources are compiled with PF_CFLAGS.
+test_static_pf: $(SR_PF_SRC) test_static_pf.c static_page.h static_store.h pf_api.h rid.h
+	$(CC) $(CFLAGS) $(PF_CFLAGS) -I$(PF_DIR) $(SR_PF_SRC) $(PF_SRC) test_static_pf.c -o $@
 
 test-basic: test_slotted
 		./test_slotted
@@ -63,11 +75,29 @@ test-scan-dataset: test_student_scan_dataset
 	@test -n "$(STUDENT_FILE)" || (echo "Set STUDENT_FILE=/path/to/student.txt"; exit 2)
 	./test_student_scan_dataset "$(STUDENT_FILE)"
 
+test-static-page: test_static_page
+	./test_static_page
+
+test-static-pf: test_static_pf
+	@test -n "$(STUDENT_FILE)" || (echo "Set STUDENT_FILE=/path/to/student.txt"; exit 2)
+	./test_static_pf "$(STUDENT_FILE)" "$(STATIC_MAX_LENGTH)"
+
+# Run the same full dataset at each required maximum-record-length setting.
+test-static-pf-all: test_static_pf
+	@test -n "$(STUDENT_FILE)" || (echo "Set STUDENT_FILE=/path/to/student.txt"; exit 2)
+	@set -e; for m in 108 112 128 160 256; do \
+		echo "===== Static storage: M=$$m ====="; \
+		./test_static_pf "$(STUDENT_FILE)" "$$m"; \
+	done
+
+
 test: test-basic test-student test-phase2 test-pf test-pf-phase3 \
-	  test-student-pf test-scan test-scan-dataset
+	  test-student-pf test-scan test-scan-dataset \
+	  test-static-page test-static-pf-all
 
 clean:
-	rm -f test_slotted test_student_dataset test_slotted_phase2 test_pf_integration test_pf_phase3 test_student_pf test_student_scan test_student_scan_dataset
+	rm -f test_slotted test_student_dataset test_slotted_phase2 test_pf_integration test_pf_phase3 test_student_pf test_student_scan test_student_scan_dataset \
+		test_static_page test_static_pf
 
 clean-phase2:
 	rm -f test_slotted_phase2
