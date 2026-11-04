@@ -327,7 +327,10 @@ int error;
 		return(PFerrno);
 	}
 	PFbufferHits++;
- }
+	/* Update recency when an existing page is accessed */
+	PFbufUnlink(bpage);
+	PFbufLinkHead(bpage);
+	}
 
 	/* Fix the page in the buffer then return*/
 	bpage->fixed = TRUE;
@@ -376,12 +379,6 @@ PFbpage *bpage;
 	/* unfix the page */
 	bpage->fixed = FALSE;
 	
-	/* unlink this page */
-	PFbufUnlink(bpage);
-
-	/* insert it as head of linked list to make it most recently used*/
-	PFbufLinkHead(bpage);
-
 	return(PFE_OK);
 }
 
