@@ -1,34 +1,61 @@
-a.out : am.o amfns.o amsearch.o aminsert.o amstack.o amglobals.o ../pflayer/pflayer.o main.o amscan.o amprint.o
-	cc am.o amfns.o amsearch.o aminsert.o  amstack.o amglobals.o ../pflayer/pflayer.o main.o amscan.o amprint.o 
 
-amlayer.o : am.o amfns.o amsearch.o aminsert.o amstack.o amglobals.o amscan.o amprint.o
-	ld -r am.o amfns.o amsearch.o aminsert.o  amstack.o amglobals.o amscan.o amprint.o  -o amlayer.o
+CC = cc
+CFLAGS = -std=gnu89 -Wno-implicit-function-declaration
 
-am.o : am.c am.h pf.h
-	cc -c am.c
+AM_OBJS = am.o amfns.o amsearch.o aminsert.o amstack.o amglobals.o amscan.o amprint.o
+TEST_OBJS = $(AM_OBJS) misc.o
 
-amfns.o : amfns.c am.h pf.h
-	cc -c amfns.c
+all: a.out amlayer.o
 
-amsearch.o : amsearch.c am.h pf.h
-	cc -c amsearch.c
+a.out: $(AM_OBJS) main.o ../pflayer/pflayer.o
+	$(CC) $(CFLAGS) -o $@ $(AM_OBJS) main.o ../pflayer/pflayer.o
 
-aminsert.o : aminsert.c am.h pf.h
-	cc -c aminsert.c
+amlayer.o: $(AM_OBJS)
+	ld -r $(AM_OBJS) -o $@
 
-amscan.o : amscan.c am.h pf.h
-	cc -c amscan.c
+test1: test1.o $(TEST_OBJS) ../pflayer/pflayer.o
+	$(CC) $(CFLAGS) -o $@ test1.o $(TEST_OBJS) ../pflayer/pflayer.o
 
-amstack.o : amstack.c am.h pf.h
-	cc -c amstack.c
+test2: test2.o $(TEST_OBJS) ../pflayer/pflayer.o
+	$(CC) $(CFLAGS) -o $@ test2.o $(TEST_OBJS) ../pflayer/pflayer.o
 
-amglobals.o : amglobals.c am.h
-	cc -c amglobals.c
+test3: test3.o $(TEST_OBJS) ../pflayer/pflayer.o
+	$(CC) $(CFLAGS) -o $@ test3.o $(TEST_OBJS) ../pflayer/pflayer.o
 
-amprint.o : amprint.c am.h pf.h 
-	cc -c amprint.c
-	
-main.o : main.c am.h pf.h 
-	cc -c main.c
+test_student_am: test_student_am.c $(TEST_OBJS) ../pflayer/pflayer.o
+	$(CC) $(CFLAGS) -I../slottedpage -I../pflayer -o $@ \
+	test_student_am.c $(TEST_OBJS) ../pflayer/pflayer.o \
+	../slottedpage/slotted_page.c ../slottedpage/student_store.c
 
+test_student_am_incremental: test_student_am_incremental.c $(TEST_OBJS) ../pflayer/pflayer.o
+	$(CC) $(CFLAGS) -I../slottedpage -I../pflayer -o $@ \
+	test_student_am_incremental.c $(TEST_OBJS) ../pflayer/pflayer.o \
+	../slottedpage/slotted_page.c ../slottedpage/student_store.c
 
+test_student_am_bulk: test_student_am_bulk.c $(TEST_OBJS) ../pflayer/pflayer.o
+	$(CC) $(CFLAGS) -I../slottedpage -I../pflayer -o $@ \
+	test_student_am_bulk.c $(TEST_OBJS) ../pflayer/pflayer.o \
+	../slottedpage/slotted_page.c ../slottedpage/student_store.c
+
+misc.o: misc.c am.h pf.h testam.h
+	$(CC) $(CFLAGS) -c misc.c
+
+test1.o: test1.c am.h testam.h
+	$(CC) $(CFLAGS) -c test1.c
+
+test2.o: test2.c am.h testam.h
+	$(CC) $(CFLAGS) -c test2.c
+
+test3.o: test3.c am.h testam.h
+	$(CC) $(CFLAGS) -c test3.c
+
+clean:
+	rm -f *.o a.out test1 test2 test3 \
+	test_student_am test_student_am_incremental test_student_am_bulk \
+	testrel.0 testrel.1 \
+	student_am.0 student_incremental.0 \
+	student_records.dat student_incremental_records.dat \
+	student_bulk_records.dat student_bulk.0
+
+.PHONY: all clean test1 test2 test3 \
+	test_student_am test_student_am_incremental test_student_am_bulk

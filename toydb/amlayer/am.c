@@ -330,8 +330,3 @@ int pageNum,offset;
 	bcopy(tempheader,pbuf2,AM_sint);
 
 }
-
-bcopy(char* s1, char *s2, int nbytes)
-{
-memcpy(s2,s1,nbytes);
-}

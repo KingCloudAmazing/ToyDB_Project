@@ -1,3 +1,5 @@
+#include <stdlib.h>
+#include <strings.h>
 typedef struct am_leafheader
 	{
 		char pageType;
@@ -22,8 +24,7 @@ typedef struct am_intheader
 extern int AM_RootPageNum; /* The page number of the root */
 extern int AM_LeftPageNum; /* The page Number of the leftmost leaf */
 extern int AM_Errno; /* last error in AM layer */
-extern char *calloc();
-extern char *malloc();
+
 
 # define AM_Check if (errVal != PFE_OK) {AM_Errno = AME_PF; return(AME_PF) ;}
 # define AM_si sizeof(int)

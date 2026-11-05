@@ -161,13 +161,13 @@ switch(attrType)
               }
    case 'f' : {
                bcopy(bufPtr,(char *)&buffloat,AM_sf);
-               printf("ATTRIBUTE is %d\n",buffloat);
+               printf("ATTRIBUTE is %f\n",buffloat);
                break;
               }
    case 'c' : {
 	       bufstr = malloc((unsigned) (attrLength + 1));
                bcopy(bufPtr,bufstr,attrLength);
-               bufstr[attrLength] = '/0';
+               bufstr[attrLength] = '\0';
                printf("ATTRIBUTE is %s\n",bufstr);
                free(bufstr);
 	       break;
@@ -176,7 +176,7 @@ switch(attrType)
 }
 
 
-AM_PrintTree(fileDesc,pageNum,attrType)
+void AM_PrintTree(fileDesc,pageNum,attrType)
 int pageNum;
 int fileDesc;
 char attrType;
