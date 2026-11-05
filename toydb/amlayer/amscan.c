@@ -490,16 +490,62 @@ int fileDesc;
 {
 char *pageBuf;
 int pageNum;
+int childPageNum;
 int errVal;
+int depth;
+AM_INTHEADER intHeader;
 
+/* Start at the root and repeatedly follow Child0 to the leftmost leaf. */
 errVal = PF_GetFirstPage(fileDesc,&pageNum,&pageBuf);
 AM_Check;
-if (*pageBuf == 'l')
-  AM_LeftPageNum = pageNum;
-else
-  AM_LeftPageNum = 2;
+
+for (depth = 0; depth < 64; depth++)
+  {
+  if (*pageBuf == 'l')
+    {
+    AM_LeftPageNum = pageNum;
+    errVal = PF_UnfixPage(fileDesc,pageNum,FALSE);
+    AM_Check;
+    return(AM_LeftPageNum);
+    }
+
+  if (*pageBuf != 'i')
+    {
+    errVal = PF_UnfixPage(fileDesc,pageNum,FALSE);
+    AM_Check;
+    AM_Errno = AME_INTERROR;
+    return(AME_INTERROR);
+    }
+
+  bcopy(pageBuf,&intHeader,AM_sint);
+  if (intHeader.numKeys < 0)
+    {
+    errVal = PF_UnfixPage(fileDesc,pageNum,FALSE);
+    AM_Check;
+    AM_Errno = AME_INTERROR;
+    return(AME_INTERROR);
+    }
+
+  /* Child0 is stored immediately after the internal-page header. */
+  bcopy(pageBuf + AM_sint,(char *)&childPageNum,AM_si);
+  errVal = PF_UnfixPage(fileDesc,pageNum,FALSE);
+  AM_Check;
+
+  if (childPageNum < 0 || childPageNum == pageNum)
+    {
+    AM_Errno = AME_INTERROR;
+    return(AME_INTERROR);
+    }
+
+  pageNum = childPageNum;
+  errVal = PF_GetThisPage(fileDesc,pageNum,&pageBuf);
+  AM_Check;
+  }
+
+/* A valid B+ tree should not require an unbounded descent. */
 errVal = PF_UnfixPage(fileDesc,pageNum,FALSE);
 AM_Check;
-return(AM_LeftPageNum);
+AM_Errno = AME_INTERROR;
+return(AME_INTERROR);
 
 }

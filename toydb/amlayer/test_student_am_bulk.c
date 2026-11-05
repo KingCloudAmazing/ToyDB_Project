@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <limits.h>
 #include <unistd.h>
 
 #include "am.h"
@@ -257,6 +258,24 @@ int buildLeafPages(int indexFd, LeafInfo *leaves,
     return 0;
 }
 
+/* Return the safe number of separator keys in one internal page. */
+static int getInternalMaxKeys(void)
+{
+    int maxKeys;
+
+    maxKeys = (PF_PAGE_SIZE - AM_sint - AM_si) /
+              (AM_si + ROLL_LENGTH);
+
+    /* Preserve the even-capacity convention used by the original AM code. */
+    if (maxKeys % 2 != 0)
+        maxKeys--;
+
+    if (maxKeys < 1 || maxKeys > SHRT_MAX)
+        return -1;
+
+    return maxKeys;
+}
+
 /* Construct the root internal page */
 int buildRootPage(int indexFd, LeafInfo *leaves, int leafCount)
 {
@@ -268,14 +287,18 @@ int buildRootPage(int indexFd, LeafInfo *leaves, int leafCount)
     char *pageBuf;
     AM_INTHEADER header;
 
-    maxKeys = (PF_PAGE_SIZE - AM_sint - AM_si) /
-              (AM_si + ROLL_LENGTH);
+    maxKeys = getInternalMaxKeys();
 
-    if (maxKeys % 2 != 0)
-        maxKeys--;
+    if (leaves == NULL || leafCount <= 0 || maxKeys < 1) {
+        printf("Invalid leaf list or internal-page capacity\n");
+        return -1;
+    }
 
-    if (leafCount <= 0 || leafCount - 1 > maxKeys) {
-        printf("Invalid leaf count or root capacity exceeded\n");
+    if (leafCount - 1 > maxKeys ||
+        AM_sint + AM_si +
+            (leafCount - 1) * (ROLL_LENGTH + AM_si) > PF_PAGE_SIZE) {
+        printf("Root capacity exceeded: requested %d children; maximum is %d\n",
+               leafCount, maxKeys + 1);
         return -1;
     }
 
@@ -288,9 +311,10 @@ int buildRootPage(int indexFd, LeafInfo *leaves, int leafCount)
 
     memset(pageBuf, 0, PF_PAGE_SIZE);
 
+    memset(&header, 0, sizeof(header));
     header.pageType = 'i';
-    header.numKeys = leafCount - 1;
-    header.maxKeys = maxKeys;
+    header.numKeys = (short)(leafCount - 1);
+    header.maxKeys = (short)maxKeys;
     header.attrLength = ROLL_LENGTH;
 
     /* First child pointer */
@@ -369,6 +393,38 @@ int verifySearch(int indexFd, char *key, int expected)
     printf("Actual matches   : %d\n", count);
 
     return (count == expected) ? 0 : -1;
+}
+
+/* Verify an ALL scan begins at the actual leftmost leaf and sees every RID. */
+static int verifyAllScan(int indexFd, int expected)
+{
+    int scanDesc;
+    int rid;
+    int count = 0;
+
+    scanDesc = xAM_OpenIndexScan(indexFd, CHAR_TYPE, ROLL_LENGTH, ALL, NULL);
+    if (scanDesc < 0) {
+        printf("Could not open ALL index scan\n");
+        return -1;
+    }
+
+    while ((rid = xAM_FindNextEntry(scanDesc)) != AME_EOF) {
+        if (rid < 0) {
+            printf("ALL scan failed with error %d\n", rid);
+            (void)xAM_CloseIndexScan(scanDesc);
+            return -1;
+        }
+        count++;
+    }
+
+    if (xAM_CloseIndexScan(scanDesc) < 0) {
+        printf("Could not close ALL index scan\n");
+        return -1;
+    }
+
+    printf("ALL scan expected records : %d\n", expected);
+    printf("ALL scan actual records   : %d\n", count);
+    return count == expected ? 0 : -1;
 }
 
 /*
@@ -482,25 +538,7 @@ static int runDuplicateBoundaryRegression(void)
 
     indexFd = xPF_OpenFile((char *)indexFile);
 
-    /*
-     * Preserve page 1 for compatibility with the current AM scan
-     * implementation, which starts the leftmost leaf at page 2.
-     */
-    err = PF_AllocPage(indexFd, &pageNum, &pageBuf);
-    if (err < 0 || pageNum != 1) {
-        printf("Could not reserve page 1 for synthetic index\n");
-        (void)xPF_CloseFile(indexFd);
-        (void)xAM_DestroyIndex((char *)indexName, 0);
-        return EXIT_FAILURE;
-    }
-
-    memset(pageBuf, 0, PF_PAGE_SIZE);
-    if (PF_UnfixPage(indexFd, pageNum, TRUE) < 0) {
-        printf("Could not unfix reserved synthetic page\n");
-        (void)xPF_CloseFile(indexFd);
-        (void)xAM_DestroyIndex((char *)indexName, 0);
-        return EXIT_FAILURE;
-    }
+    /* The first allocated leaf now follows root page 0 directly. */
 
     err = buildLeafPages(indexFd, leaves, total, &leafCount);
     if (err < 0) {
@@ -545,7 +583,8 @@ static int runDuplicateBoundaryRegression(void)
     indexFd = xPF_OpenFile((char *)indexFile);
 
     if (verifySearch(indexFd, entries[singles - 1].roll, 1) < 0 ||
-        verifySearch(indexFd, duplicateKey, duplicateGroupSize) < 0) {
+        verifySearch(indexFd, duplicateKey, duplicateGroupSize) < 0 ||
+        verifyAllScan(indexFd, total) < 0) {
         printf("FAIL: synthetic duplicate-boundary search verification\n");
         (void)xPF_CloseFile(indexFd);
         (void)xAM_DestroyIndex((char *)indexName, 0);
@@ -568,17 +607,181 @@ static int runDuplicateBoundaryRegression(void)
     printf("PASS: all %d RIDs for the boundary key were searchable\n",
            duplicateGroupSize);
     printf("PASS: synthetic duplicate-boundary regression\n");
+    printf("PASS: ALL scan begins at the actual leftmost leaf\n");
 
     return EXIT_SUCCESS;
 }
+
+/*
+ * Capacity regression for the deliberately supported one-level root.
+ * The tree must accept the maximum representable leaf-child count and reject
+ * one additional child before modifying the existing root page.
+ */
+static int runRootCapacityRegression(void)
+{
+    const char *indexName = "student_root_capacity";
+    const char *indexFile = "student_root_capacity.0";
+    LeafInfo leaves[MAX_STUDENTS];
+    AM_INTHEADER rootHeader;
+    AM_INTHEADER afterHeader;
+    char rootSnapshot[PF_PAGE_SIZE];
+    char keyBuffer[ROLL_LENGTH + 1];
+    char *pageBuf;
+    int maxKeys;
+    int maxChildren;
+    int i;
+    int pageNum;
+    int indexFd = -1;
+    int err;
+
+    printf("\n========== ROOT CAPACITY REGRESSION ==========\n");
+
+    maxKeys = getInternalMaxKeys();
+    if (maxKeys < 1 || maxKeys + 2 > MAX_STUDENTS) {
+        printf("FAIL: invalid calculated internal-node capacity\n");
+        return EXIT_FAILURE;
+    }
+    maxChildren = maxKeys + 1;
+
+    printf("Internal-page separator capacity : %d\n", maxKeys);
+    printf("Maximum leaf children            : %d\n", maxChildren);
+
+    PF_Init();
+    if (access(indexFile, F_OK) == 0) {
+        err = AM_DestroyIndex((char *)indexName, 0);
+        if (err != AME_OK) {
+            printf("Could not remove previous capacity-test index: %d\n", err);
+            return EXIT_FAILURE;
+        }
+    }
+
+    err = xAM_CreateIndex((char *)indexName, 0, CHAR_TYPE, ROLL_LENGTH);
+    if (err < 0) {
+        printf("Could not create root-capacity test index: %d\n", err);
+        return EXIT_FAILURE;
+    }
+
+    indexFd = xPF_OpenFile((char *)indexFile);
+    if (indexFd < 0) {
+        printf("Could not open root-capacity test index\n");
+        (void)AM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+
+    /* Allocate real child-page numbers for the exact-capacity and overflow cases. */
+    for (i = 0; i < maxChildren + 1; ++i) {
+        err = PF_AllocPage(indexFd, &pageNum, &pageBuf);
+        if (err < 0) {
+            printf("Could not allocate synthetic child page %d\n", i);
+            (void)xPF_CloseFile(indexFd);
+            (void)AM_DestroyIndex((char *)indexName, 0);
+            return EXIT_FAILURE;
+        }
+
+        leaves[i].pageNum = pageNum;
+        (void)snprintf(keyBuffer, sizeof(keyBuffer), "%08d", i + 1);
+        memcpy(leaves[i].firstKey, keyBuffer, ROLL_LENGTH);
+
+        if (PF_UnfixPage(indexFd, pageNum, FALSE) < 0) {
+            printf("Could not unfix synthetic child page %d\n", i);
+            (void)xPF_CloseFile(indexFd);
+            (void)AM_DestroyIndex((char *)indexName, 0);
+            return EXIT_FAILURE;
+        }
+    }
+
+    /* Exactly maxKeys separators / maxChildren child pages must fit. */
+    if (buildRootPage(indexFd, leaves, maxChildren) < 0) {
+        printf("FAIL: root rejected its exact supported capacity\n");
+        (void)xPF_CloseFile(indexFd);
+        (void)AM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+
+    err = PF_GetThisPage(indexFd, 0, &pageBuf);
+    if (err < 0) {
+        printf("Could not read constructed root page\n");
+        (void)xPF_CloseFile(indexFd);
+        (void)AM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+    memcpy(&rootHeader, pageBuf, AM_sint);
+    memcpy(rootSnapshot, pageBuf, PF_PAGE_SIZE);
+    if (PF_UnfixPage(indexFd, 0, FALSE) < 0) {
+        printf("Could not unfix constructed root page\n");
+        (void)xPF_CloseFile(indexFd);
+        (void)AM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+
+    if (rootHeader.pageType != 'i' ||
+        rootHeader.numKeys != maxKeys ||
+        rootHeader.maxKeys != maxKeys ||
+        rootHeader.attrLength != ROLL_LENGTH) {
+        printf("FAIL: root header does not report the expected capacity\n");
+        (void)xPF_CloseFile(indexFd);
+        (void)AM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+    printf("PASS: root accepts exactly %d child pages\n", maxChildren);
+
+    /* One extra leaf child must be rejected without changing the root. */
+    if (buildRootPage(indexFd, leaves, maxChildren + 1) == 0) {
+        printf("FAIL: root accepted %d children (capacity is %d)\n",
+               maxChildren + 1, maxChildren);
+        (void)xPF_CloseFile(indexFd);
+        (void)AM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+
+    err = PF_GetThisPage(indexFd, 0, &pageBuf);
+    if (err < 0) {
+        printf("Could not reread root after overflow rejection\n");
+        (void)xPF_CloseFile(indexFd);
+        (void)AM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+    memcpy(&afterHeader, pageBuf, AM_sint);
+    i = memcmp(rootSnapshot, pageBuf, PF_PAGE_SIZE);
+    if (PF_UnfixPage(indexFd, 0, FALSE) < 0) {
+        printf("Could not unfix root after overflow check\n");
+        (void)xPF_CloseFile(indexFd);
+        (void)AM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+
+    if (i != 0 || afterHeader.numKeys != maxKeys) {
+        printf("FAIL: overflow rejection modified the existing root page\n");
+        (void)xPF_CloseFile(indexFd);
+        (void)AM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+    printf("PASS: root rejects overflow without modifying the page\n");
+
+    if (xPF_CloseFile(indexFd) < 0) {
+        printf("Could not close root-capacity test index\n");
+        (void)AM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+    if (AM_DestroyIndex((char *)indexName, 0) != AME_OK) {
+        printf("Could not destroy root-capacity test index\n");
+        return EXIT_FAILURE;
+    }
+
+    printf("PASS: root-capacity regression (one-level-root limit documented)\n");
+    return EXIT_SUCCESS;
+}
+
 
 int main(int argc, char **argv)
 {
     if (argc == 2 && strcmp(argv[1], "--boundary-test") == 0)
         return runDuplicateBoundaryRegression();
+    if (argc == 2 && strcmp(argv[1], "--capacity-test") == 0)
+        return runRootCapacityRegression();
 
     if (argc != 1) {
-        fprintf(stderr, "Usage: %s [--boundary-test]\\n", argv[0]);
+        fprintf(stderr, "Usage: %s [--boundary-test | --capacity-test]\\n", argv[0]);
         return EXIT_FAILURE;
     }
 
@@ -713,30 +916,7 @@ int main(int argc, char **argv)
         return 1;
     }
 
-    /*
-       Reserve page 1 because the existing AM scan code
-       expects the leftmost leaf page to be page 2.
-    */
-    {
-        int reservedPage;
-        char *reservedBuf;
-
-        err = PF_AllocPage(indexFd, &reservedPage, &reservedBuf);
-
-        if (err < 0 || reservedPage != 1) {
-            printf("Could not reserve page 1\n");
-            xPF_CloseFile(indexFd);
-            return 1;
-        }
-
-        memset(reservedBuf, 0, PF_PAGE_SIZE);
-
-        if (PF_UnfixPage(indexFd, reservedPage, 1) < 0) {
-            printf("Could not unfix reserved page\n");
-            xPF_CloseFile(indexFd);
-            return 1;
-        }
-    }
+    /* First leaf allocation follows root page 0; no dummy page is needed. */
 
     /* Build leaf pages */
     err = buildLeafPages(indexFd, leaves, total, &leafCount);
@@ -785,7 +965,8 @@ int main(int argc, char **argv)
     /* Verify known duplicate roll numbers */
     if (verifySearch(indexFd, "97305818", 2) < 0 ||
         verifySearch(indexFd, "99302001", 2) < 0 ||
-        verifySearch(indexFd, "99310001", 2) < 0) {
+        verifySearch(indexFd, "99310001", 2) < 0 ||
+        verifyAllScan(indexFd, total) < 0) {
 
         printf("FAIL: Bulk index search verification\n");
         xPF_CloseFile(indexFd);
@@ -795,6 +976,7 @@ int main(int argc, char **argv)
     printf("\nPASS: Bulk leaf construction\n");
     printf("PASS: Root internal page construction\n");
     printf("PASS: Duplicate roll-number searches\n");
+    printf("PASS: ALL scan from dynamically discovered leftmost leaf\n");
 
     xPF_CloseFile(indexFd);
 

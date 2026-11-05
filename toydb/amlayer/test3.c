@@ -149,4 +149,5 @@ int testval;
 	xAM_DestroyIndex(RELNAME,0);
 
 	printf("test3 done!\n");
+	return(0);
 }

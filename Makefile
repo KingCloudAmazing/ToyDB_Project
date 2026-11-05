@@ -36,6 +36,7 @@ test-am:
 	cd toydb/amlayer && ./test3
 	cd toydb/amlayer && ./run_am_benchmarks.sh
 	cd toydb/amlayer && ./test_student_am_bulk --boundary-test
+	cd toydb/amlayer && ./test_student_am_bulk --capacity-test
 
 # Clean generated build files using component Makefiles.
 clean:
