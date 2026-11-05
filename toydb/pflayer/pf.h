@@ -38,3 +38,11 @@
 extern int PFerrno;		/* error number of last error */
 extern void PF_Init();
 extern void PF_PrintError();
+extern int PF_CreateFile(char *fname);
+extern int PF_DestroyFile(char *fname);
+extern int PF_OpenFile(char *fname);
+extern int PF_CloseFile(int fd);
+
+extern int PF_GetThisPage(int fd, int pagenum, char **pagebuf);
+extern int PF_AllocPage(int fd, int *pagenum, char **pagebuf);
+extern int PF_UnfixPage(int fd, int pagenum, int dirty);

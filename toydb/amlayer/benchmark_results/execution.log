@@ -1,0 +1,71 @@
+==================================================
+Running one_shot construction...
+Student records loaded: 17813
+Index entries inserted: 17813
+Matching RID: 80897
+Matching RID: 64551
+
+========== AM TEST RESULT ==========
+Total Student records : 17813
+Search roll number    : 97305818
+Matching records      : 2
+PASS: One-shot Student index construction
+PASS: Duplicate roll-number search
+Running common query workload for one_shot...
+Completed 30 independent query measurements for one_shot
+==================================================
+Running incremental construction...
+Student records loaded: 17813
+Incremental index entries inserted: 17813
+Matching RID: 80897
+Matching RID: 64551
+
+========== INCREMENTAL AM RESULT ==========
+Total Student records : 17813
+Search roll number    : 97305818
+Matching records      : 2
+PASS: Incremental index construction
+PASS: Duplicate roll-number search
+Running common query workload for incremental...
+Completed 30 independent query measurements for incremental
+==================================================
+Running bulk_load construction...
+
+========== BULK DATA PREPARATION ==========
+Student records loaded : 17813
+Records sorted         : 17813
+
+========== BULK LEAF CONSTRUCTION ==========
+Total Student records : 17813
+Leaf pages created    : 71
+First leaf page       : 2
+Last leaf page        : 72
+
+========== ROOT CONSTRUCTION ==========
+Root page             : 0
+Separator keys        : 70
+
+========== SEARCH VERIFICATION ==========
+Matching RID: 80897
+Matching RID: 64551
+Search key       : 97305818
+Expected matches : 2
+Actual matches   : 2
+Matching RID: 130079
+Matching RID: 104469
+Search key       : 99302001
+Expected matches : 2
+Actual matches   : 2
+Matching RID: 104467
+Matching RID: 130082
+Search key       : 99310001
+Expected matches : 2
+Actual matches   : 2
+
+PASS: Bulk leaf construction
+PASS: Root internal page construction
+PASS: Duplicate roll-number searches
+
+========== BULK LOAD COMPLETE ==========
+Running common query workload for bulk_load...
+Completed 30 independent query measurements for bulk_load

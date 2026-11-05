@@ -1,3 +1,6 @@
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
 /* misc.c */
 #include "pf.h"
 #include "testam.h"
