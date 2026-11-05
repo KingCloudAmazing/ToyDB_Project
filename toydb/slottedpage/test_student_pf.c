@@ -31,6 +31,51 @@ static void trim_eol(char *text)
         text[--n] = '\0';
 }
 
+/*
+ * Count the actual allocated PF pages in an open PF file.
+ * Each page is released without marking it dirty before advancing.
+ */
+static int count_allocated_pf_pages(int fd, int *count_out)
+{
+    int page_num = -1;
+    int pf_status;
+    int count = 0;
+    char *page_buf = NULL;
+
+    if (count_out == NULL)
+        return -1;
+
+    *count_out = 0;
+
+    pf_status = PF_GetFirstPage(fd, &page_num, &page_buf);
+    if (pf_status == PFE_EOF)
+        return PFE_OK;
+    if (pf_status != PFE_OK)
+        return pf_status;
+
+    for (;;) {
+        int next_page;
+
+        ++count;
+
+        pf_status = PF_UnfixPage(fd, page_num, FALSE);
+        if (pf_status != PFE_OK)
+            return pf_status;
+
+        next_page = page_num;
+        pf_status = PF_GetNextPage(fd, &next_page, &page_buf);
+        if (pf_status == PFE_EOF)
+            break;
+        if (pf_status != PFE_OK)
+            return pf_status;
+
+        page_num = next_page;
+    }
+
+    *count_out = count;
+    return PFE_OK;
+}
+
 static void cleanup(struct SavedStudent *students, int count)
 {
     int i;
@@ -49,6 +94,8 @@ int main(int argc, char **argv)
     int count = 0;
     int i;
     int status;
+    int pf_page_count = 0;
+    int pf_count_status;
 
     if (argc != 2) {
         fprintf(stderr, "Usage: %s /path/to/student.txt\n", argv[0]);
@@ -177,6 +224,16 @@ int main(int argc, char **argv)
         }
     }
 
+    pf_count_status = count_allocated_pf_pages(store.fd, &pf_page_count);
+    if (pf_count_status != PFE_OK) {
+        fprintf(stderr, "PF page-count traversal failed (PF=%d)\n",
+                pf_count_status);
+        (void)SPStore_Close(&store);
+        cleanup(students, count);
+        (void)SPStore_DestroyFile(path);
+        return EXIT_FAILURE;
+    }
+
     status = SPStore_Close(&store);
     if (status != SPSTORE_OK) {
         fprintf(stderr, "Final close failed\n");
@@ -193,6 +250,7 @@ int main(int argc, char **argv)
 
     printf("PASS: PF-backed Student dataset insert/close/reopen/retrieve\n");
     printf("Student records verified : %d\n", count);
+    printf("PF pages allocated       : %d\n", pf_page_count);
     cleanup(students, count);
     return EXIT_SUCCESS;
 }
