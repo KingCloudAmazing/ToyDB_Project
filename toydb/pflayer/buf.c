@@ -10,6 +10,18 @@ static PFbpage *PFfirstbpage= NULL;	/* ptr to first buffer page, or NULL */
 static PFbpage *PFlastbpage = NULL;	/* ptr to last buffer page, or NULL */
 static PFbpage *PFfreebpage= NULL;	/* list of free buffer pages */
 
+// By B24ES1030
+/* Buffer configuration */
+int PFbufCapacity = PF_MAX_BUFS;
+int PFbufPolicy = PF_LRU;
+
+/* Buffer statistics */
+long PFlogicalReads = 0;
+long PFlogicalWrites = 0;
+long PFphysicalReads = 0;
+long PFphysicalWrites = 0;
+long PFbufferHits = 0;
+
 extern char *malloc();
 
 static void PFbufInsertFree(bpage)
@@ -90,6 +102,30 @@ GLOBAL VARIABLES MODIFIED:
 
 }
 
+//B24ES1030: for setting the buffer capacity
+int PFbufSetCapacity(int capacity)
+{
+    if (capacity <= 0 || capacity > PF_MAX_BUFS)
+        return PFE_NOBUF;
+
+    if (PFnumbpage > capacity)
+        return PFE_NOBUF;
+
+    PFbufCapacity = capacity;
+
+    return PFE_OK;
+}
+
+// B24ES1030: for selecting the buffer replacement policy
+int PFbufSetPolicy(int policy)
+{
+    if (policy != PF_LRU && policy != PF_MRU)
+        return PFE_NOBUF;
+
+    PFbufPolicy = policy;
+
+    return PFE_OK;
+}
 
 static PFbufInternalAlloc(bpage,writefcn)
 PFbpage **bpage;	/* pointer to pointer to buffer bpage to be allocated*/
@@ -132,7 +168,8 @@ int error;		/* error value returned*/
 		*bpage = PFfreebpage;
 		PFfreebpage = (*bpage)->nextpage;
 	}
-	else if (PFnumbpage < PF_MAX_BUFS){
+	//B24ES1030: for configuring the buffer capacity
+	else if (PFnumbpage < PFbufCapacity){
 		/* We have not reached max buffer limit, so
 		malloc() a new one */
 		if ((*bpage=(PFbpage *)malloc(sizeof(PFbpage)))==NULL){
@@ -150,11 +187,23 @@ int error;		/* error value returned*/
 
 		*bpage = NULL;		/* set initial return value */
 
-		for (tbpage=PFlastbpage;tbpage!=NULL;tbpage=tbpage->prevpage){
-			if (!tbpage->fixed)
-				/* found a page that can be swapped out */
-				break;
-		}
+		// B24ES1030: for selecting the buffer replacement policy
+		if (PFbufPolicy == PF_LRU) {
+			/* LRU: start from least recently used page */
+			for (tbpage = PFlastbpage; tbpage != NULL; tbpage = tbpage->prevpage)
+			{
+				if (!tbpage->fixed)
+					break;
+			}
+			}
+
+		else {
+				/* MRU: start from most recently used page */
+				for (tbpage=PFfirstbpage; tbpage!=NULL; tbpage=tbpage->nextpage) {
+					if (!tbpage->fixed)
+						break;
+				}
+			}
 
 		if (tbpage == NULL){
 			/* couldn't find a free page */
@@ -163,9 +212,18 @@ int error;		/* error value returned*/
 		}
 
 		/* write out the dirty page */
-		if (tbpage->dirty&&((error=(*writefcn)(tbpage->fd,
-				tbpage->page,&tbpage->fpage))!= PFE_OK))
-			return(error);
+		// B24ES1030
+		if (tbpage->dirty) {
+		error = (*writefcn)(tbpage->fd,
+							tbpage->page,
+							&tbpage->fpage);
+
+			if (error != PFE_OK)
+				return(error);
+
+			PFphysicalWrites++;
+		}
+
 		tbpage->dirty = FALSE;
 
 		/* unlink from hash table */
@@ -223,6 +281,8 @@ GLOBAL VARIABLES MODIFIED:
 PFbpage *bpage;	/* pointer to buffer */
 int error;
 
+	*fpage = NULL;
+
 	if ((bpage=PFhashFind(fd,pagenum)) == NULL){
 		/* page not in buffer. */
 		
@@ -242,6 +302,7 @@ int error;
 			*fpage = NULL;
 			return(error);
 		}
+		PFphysicalReads++;
 
 		/* insert new page into hash table */
 		if ((error=PFhashInsert(fd,pagenum,bpage))!=PFE_OK){
@@ -257,17 +318,24 @@ int error;
 		bpage->page = pagenum;
 		bpage->dirty = FALSE;
 	}
-	else if (bpage->fixed){
+	else{
+	 if (bpage->fixed){
 		/* page already in memory, and is fixed, so we can't
 		get it again. */
 		*fpage = &bpage->fpage;
 		PFerrno = PFE_PAGEFIXED;
 		return(PFerrno);
 	}
+	PFbufferHits++;
+	/* Update recency when an existing page is accessed */
+	PFbufUnlink(bpage);
+	PFbufLinkHead(bpage);
+	}
 
 	/* Fix the page in the buffer then return*/
 	bpage->fixed = TRUE;
 	*fpage = &bpage->fpage;
+	PFlogicalReads++;
 	return(PFE_OK);
 }
 
@@ -303,19 +371,14 @@ PFbpage *bpage;
 		return(PFerrno);
 	}
 
-	if (dirty)
-		/* mark this page dirty */
+	if (dirty) {
 		bpage->dirty = TRUE;
+		PFlogicalWrites++;
+	}
 	
 	/* unfix the page */
 	bpage->fixed = FALSE;
 	
-	/* unlink this page */
-	PFbufUnlink(bpage);
-
-	/* insert it as head of linked list to make it most recently used*/
-	PFbufLinkHead(bpage);
-
 	return(PFE_OK);
 }
 
@@ -406,11 +469,17 @@ int error;		/* error code */
 			}
 
 			/* write out dirty page */
-			if (bpage->dirty&&((error=(*writefcn)(fd,bpage->page,
-					&bpage->fpage))!= PFE_OK))
-				/* error writing file */
-				return(error);
-			bpage->dirty = FALSE;
+			if (bpage->dirty)
+			{
+				error = (*writefcn)(fd, bpage->page, &bpage->fpage);
+
+				if (error != PFE_OK)
+					return (error);
+
+				PFphysicalWrites++;
+			}
+
+				bpage->dirty = FALSE;
 
 			/* get rid of it from the hash table */
 			if ((error=PFhashDelete(fd,bpage->page))!= PFE_OK){
@@ -493,4 +562,42 @@ PFbpage *bpage;
 				bpage->fd,bpage->page,(int)bpage->fixed,
 				(int)bpage->dirty,(int)&bpage->fpage);
 	}
+}
+
+// B24ES1030: Statistics functions
+void PFbufResetStats()
+{
+    PFlogicalReads = 0;
+    PFlogicalWrites = 0;
+    PFphysicalReads = 0;
+    PFphysicalWrites = 0;
+    PFbufferHits = 0;
+}
+
+void PFbufGetStats(PFBufferStats *stats)
+{
+    if (stats == NULL)
+        return;
+
+    stats->logicalReads = PFlogicalReads;
+    stats->logicalWrites = PFlogicalWrites;
+    stats->physicalReads = PFphysicalReads;
+    stats->physicalWrites = PFphysicalWrites;
+    stats->bufferHits = PFbufferHits;
+}
+
+void PFbufPrintStats()
+{
+    double hitRatio = 0.0;
+
+    if (PFlogicalReads > 0)
+        hitRatio = (double)PFbufferHits / PFlogicalReads;
+
+    printf("Buffer statistics:\n");
+    printf("Logical reads    : %ld\n", PFlogicalReads);
+    printf("Logical writes   : %ld\n", PFlogicalWrites);
+    printf("Physical reads   : %ld\n", PFphysicalReads);
+    printf("Physical writes  : %ld\n", PFphysicalWrites);
+    printf("Buffer hits      : %ld\n", PFbufferHits);
+    printf("Hit ratio        : %.4f\n", hitRatio);
 }

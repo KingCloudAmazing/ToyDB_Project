@@ -36,6 +36,37 @@ typedef struct PFftab_ele {
 /************************** Buffer Page Decls *********************/
 #define PF_MAX_BUFS	20	/* max # of buffers */
 
+//Changes by Me (Vineet B24ES1030)
+/* Buffer replacement policies */
+#define PF_LRU 0
+#define PF_MRU 1
+
+/* Configurable buffer pool */
+extern int PFbufCapacity;
+extern int PFbufPolicy;
+
+extern int PFbufSetCapacity(int capacity);
+extern int PFbufSetPolicy(int policy);
+
+/* Buffer statistics */
+typedef struct {
+    long logicalReads;
+    long logicalWrites;
+    long physicalReads;
+    long physicalWrites;
+    long bufferHits;
+} PFBufferStats;
+
+extern long PFlogicalReads;
+extern long PFlogicalWrites;
+extern long PFphysicalReads;
+extern long PFphysicalWrites;
+extern long PFbufferHits;
+
+extern void PFbufResetStats(void);
+extern void PFbufGetStats(PFBufferStats *stats);
+extern void PFbufPrintStats(void);
+
 /* buffer page decl */
 typedef struct PFbpage {
 	struct PFbpage *nextpage;	/* next in the linked list of

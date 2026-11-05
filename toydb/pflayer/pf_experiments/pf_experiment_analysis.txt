@@ -1,0 +1,37 @@
+Workload
+Page-access sequence: 0, 1, 2, 3, 0, 1, 4, 0, 1, 2, 3, 4
+Logical reads per configuration: 12
+Policies: LRU (0) and MRU (1)
+Buffer capacities: 2, 4, 8, and 16 pages
+
+Results
+- LRU, capacity 2: 12 physical reads, 0 hits, 0.00% hit ratio.
+- LRU, capacity 4: 8 physical reads, 4 hits, 33.33% hit ratio.
+- LRU, capacity 8: 5 physical reads, 7 hits, 58.33% hit ratio.
+- LRU, capacity 16: 5 physical reads, 7 hits, 58.33% hit ratio.
+- MRU, capacity 2: 10 physical reads, 2 hits, 16.67% hit ratio.
+- MRU, capacity 4: 6 physical reads, 6 hits, 50.00% hit ratio.
+- MRU, capacity 8: 5 physical reads, 7 hits, 58.33% hit ratio.
+- MRU, capacity 16: 5 physical reads, 7 hits, 58.33% hit ratio.
+
+Observations
+1. Increasing buffer capacity reduces physical reads for both policies until the
+   workload's five distinct pages can be retained.
+2. For this access sequence, MRU performs better than LRU at capacities 2 and 4.
+3. At capacities 8 and 16, both policies produce the same result: 5 physical
+   reads and a 58.33% hit ratio.
+4. Increasing capacity from 8 to 16 does not improve this workload's measured
+   results.
+5. Physical writes are zero because this experiment performs page reads only;
+   it does not modify pages.
+
+Conclusion
+For this specific access sequence, larger buffer capacity improves hit ratio
+and reduces physical reads. MRU outperforms LRU at the two smaller capacities,
+while both policies perform identically at capacities 8 and 16. These results
+are workload-specific and do not prove that MRU is generally superior to LRU.
+
+Measurement note
+The hit ratio is calculated as (buffer hits / logical reads) * 100. The results
+are from the standalone PF buffer-manager experiment and are independent of
+the AM/B+ Tree implementation.
