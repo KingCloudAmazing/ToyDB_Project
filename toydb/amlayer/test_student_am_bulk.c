@@ -371,8 +371,217 @@ int verifySearch(int indexFd, char *key, int expected)
     return (count == expected) ? 0 : -1;
 }
 
-int main()
+/*
+ * Synthetic regression for duplicate groups at a leaf-page boundary.
+ *
+ * Fill the first leaf with distinct one-RID keys until the remaining space
+ * can hold one more distinct key but cannot hold the complete duplicate
+ * group. The complete duplicate group must start on the next leaf.
+ */
+static int runDuplicateBoundaryRegression(void)
 {
+    const char *indexName = "student_bulk_boundary";
+    const char *indexFile = "student_bulk_boundary.0";
+    const int duplicateGroupSize = 4;
+    const int singleKeyBytes =
+        ROLL_LENGTH + AM_ss + AM_si + AM_ss;
+    const int duplicateGroupBytes =
+        ROLL_LENGTH + AM_ss +
+        duplicateGroupSize * (AM_si + AM_ss);
+
+    LeafInfo leaves[MAX_STUDENTS];
+    int payloadBytes;
+    int singles;
+    int remaining;
+    int total;
+    int i;
+    int leafCount = 0;
+    int pageNum;
+    int indexFd = -1;
+    int err;
+    char *pageBuf;
+    char keyBuffer[ROLL_LENGTH + 1];
+    char duplicateKey[ROLL_LENGTH] = {
+        '9', '9', '9', '9', '9', '9', '9', '9'
+    };
+
+    printf("\n========== SYNTHETIC DUPLICATE-BOUNDARY TEST ==========\n");
+
+    /*
+     * Derive the boundary from the actual AM header size and ABI. Find a
+     * number of distinct keys that leaves enough room for a singleton key
+     * but less room than the complete duplicate group requires.
+     */
+    payloadBytes = PF_PAGE_SIZE - AM_sl;
+
+    for (singles = 1;
+         singles < MAX_STUDENTS - duplicateGroupSize;
+         ++singles) {
+        remaining = payloadBytes - singles * singleKeyBytes;
+
+        if (remaining >= singleKeyBytes &&
+            remaining < duplicateGroupBytes) {
+            break;
+        }
+    }
+
+    if (singles >= MAX_STUDENTS - duplicateGroupSize) {
+        printf("Could not construct a duplicate-group boundary workload\n");
+        return EXIT_FAILURE;
+    }
+
+    remaining = payloadBytes - singles * singleKeyBytes;
+    total = singles + duplicateGroupSize;
+
+    /* Prepare sorted, distinct keys preceding the duplicate group. */
+    for (i = 0; i < singles; ++i) {
+        (void)snprintf(keyBuffer, sizeof(keyBuffer), "%08d", i + 1);
+        memcpy(entries[i].roll, keyBuffer, ROLL_LENGTH);
+        entries[i].rid = 100000 + i;
+    }
+
+    /* Add one duplicate key with four distinct synthetic RIDs. */
+    for (i = 0; i < duplicateGroupSize; ++i) {
+        memcpy(entries[singles + i].roll,
+               duplicateKey, ROLL_LENGTH);
+        entries[singles + i].rid = 900000 + i;
+    }
+
+    printf("Distinct keys before duplicate group : %d\n", singles);
+    printf("Duplicate-group size                 : %d\n",
+           duplicateGroupSize);
+    printf("Free bytes before duplicate group    : %d\n", remaining);
+    printf("Bytes required by duplicate group    : %d\n",
+           duplicateGroupBytes);
+
+    if (remaining < singleKeyBytes ||
+        remaining >= duplicateGroupBytes) {
+        printf("FAIL: synthetic workload did not reach the intended boundary\n");
+        return EXIT_FAILURE;
+    }
+
+    PF_Init();
+
+    /*
+     * The xAM_DestroyIndex wrapper exits when the file does not exist.
+     * Check first so a fresh checkout can run this test safely.
+     */
+    if (access(indexFile, F_OK) == 0) {
+        err = AM_DestroyIndex((char *)indexName, 0);
+        if (err != AME_OK) {
+            printf("Could not remove previous synthetic index: %d\n", err);
+            return EXIT_FAILURE;
+        }
+    }
+
+    err = xAM_CreateIndex((char *)indexName, 0, CHAR_TYPE, ROLL_LENGTH);
+    if (err < 0) {
+        printf("Could not create synthetic boundary index: %d\n", err);
+        return EXIT_FAILURE;
+    }
+
+    indexFd = xPF_OpenFile((char *)indexFile);
+
+    /*
+     * Preserve page 1 for compatibility with the current AM scan
+     * implementation, which starts the leftmost leaf at page 2.
+     */
+    err = PF_AllocPage(indexFd, &pageNum, &pageBuf);
+    if (err < 0 || pageNum != 1) {
+        printf("Could not reserve page 1 for synthetic index\n");
+        (void)xPF_CloseFile(indexFd);
+        (void)xAM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+
+    memset(pageBuf, 0, PF_PAGE_SIZE);
+    if (PF_UnfixPage(indexFd, pageNum, TRUE) < 0) {
+        printf("Could not unfix reserved synthetic page\n");
+        (void)xPF_CloseFile(indexFd);
+        (void)xAM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+
+    err = buildLeafPages(indexFd, leaves, total, &leafCount);
+    if (err < 0) {
+        printf("FAIL: synthetic leaf construction failed\n");
+        (void)xPF_CloseFile(indexFd);
+        (void)xAM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+
+    if (leafCount != 2) {
+        printf("FAIL: expected exactly two leaf pages, got %d\n",
+               leafCount);
+        (void)xPF_CloseFile(indexFd);
+        (void)xAM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+
+    if (memcmp(leaves[1].firstKey,
+               duplicateKey, ROLL_LENGTH) != 0) {
+        printf("FAIL: duplicate group did not begin at the second leaf\n");
+        (void)xPF_CloseFile(indexFd);
+        (void)xAM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+
+    err = buildRootPage(indexFd, leaves, leafCount);
+    if (err < 0) {
+        printf("FAIL: synthetic root construction failed\n");
+        (void)xPF_CloseFile(indexFd);
+        (void)xAM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+
+    if (xPF_CloseFile(indexFd) < 0) {
+        printf("Could not close synthetic boundary index\n");
+        (void)xAM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+    indexFd = -1;
+
+    /* Reopen and verify through the public AM equality-scan interface. */
+    indexFd = xPF_OpenFile((char *)indexFile);
+
+    if (verifySearch(indexFd, entries[singles - 1].roll, 1) < 0 ||
+        verifySearch(indexFd, duplicateKey, duplicateGroupSize) < 0) {
+        printf("FAIL: synthetic duplicate-boundary search verification\n");
+        (void)xPF_CloseFile(indexFd);
+        (void)xAM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+
+    if (xPF_CloseFile(indexFd) < 0) {
+        printf("Could not close synthetic boundary index after verification\n");
+        (void)xAM_DestroyIndex((char *)indexName, 0);
+        return EXIT_FAILURE;
+    }
+    indexFd = -1;
+
+    if (AM_DestroyIndex((char *)indexName, 0) != AME_OK) {
+        printf("Could not remove synthetic boundary index after test\n");
+        return EXIT_FAILURE;
+    }
+
+    printf("PASS: duplicate group was moved intact to the next leaf\n");
+    printf("PASS: all %d RIDs for the boundary key were searchable\n",
+           duplicateGroupSize);
+    printf("PASS: synthetic duplicate-boundary regression\n");
+
+    return EXIT_SUCCESS;
+}
+
+int main(int argc, char **argv)
+{
+    if (argc == 2 && strcmp(argv[1], "--boundary-test") == 0)
+        return runDuplicateBoundaryRegression();
+
+    if (argc != 1) {
+        fprintf(stderr, "Usage: %s [--boundary-test]\\n", argv[0]);
+        return EXIT_FAILURE;
+    }
+
     FILE *fp;
     char line[MAX_LINE];
     char roll[ROLL_LENGTH + 1];
