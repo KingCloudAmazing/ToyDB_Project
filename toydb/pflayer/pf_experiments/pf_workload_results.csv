@@ -1,0 +1,11 @@
+workload,read_operations,write_operations,policy,capacity,logical_reads,logical_writes,physical_reads,physical_writes,buffer_hits,hit_ratio
+100R_0W,20,0,LRU,3,20,0,20,0,0,0.00
+100R_0W,20,0,MRU,3,20,0,12,0,8,40.00
+75R_25W,15,5,LRU,3,20,5,20,5,0,0.00
+75R_25W,15,5,MRU,3,20,5,12,5,8,40.00
+50R_50W,10,10,LRU,3,20,10,20,10,0,0.00
+50R_50W,10,10,MRU,3,20,10,12,10,8,40.00
+25R_75W,5,15,LRU,3,20,15,20,15,0,0.00
+25R_75W,5,15,MRU,3,20,15,12,11,8,40.00
+0R_100W,0,20,LRU,3,20,20,20,20,0,0.00
+0R_100W,0,20,MRU,3,20,20,12,12,8,40.00
