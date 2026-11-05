@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <unistd.h>
 
 #include "am.h"
 #include "testam.h"
@@ -62,18 +63,25 @@ int extractRollNumber(char *line, char roll[ROLL_LENGTH + 1])
 
 extern int AM_InsertintoLeaf(char *, int, char *, int, int, int);
 
-/* Construct sorted leaf pages */
+/* Construct sorted leaf pages without splitting a duplicate-key group. */
 int buildLeafPages(int indexFd, LeafInfo *leaves,
                    int total, int *leafCount)
 {
     int i = 0, j;
     int pageNum, err;
     int count = 0;
-    int index, newKey, required;
+    int index;
+    int groupEnd, groupSize, k;
+    int required, available;
 
     char *pageBuf;
     char *prevBuf = NULL;
     int prevPage = -1;
+
+    if (leaves == NULL || leafCount == NULL || total <= 0)
+        return -1;
+
+    *leafCount = 0;
 
     while (i < total) {
 
@@ -83,7 +91,6 @@ int buildLeafPages(int indexFd, LeafInfo *leaves,
         }
 
         err = PF_AllocPage(indexFd, &pageNum, &pageBuf);
-
         if (err < 0) {
             printf("Error allocating leaf page\n");
             return -1;
@@ -91,82 +98,143 @@ int buildLeafPages(int indexFd, LeafInfo *leaves,
 
         memset(pageBuf, 0, PF_PAGE_SIZE);
 
-        AM_LEAFHEADER *header = (AM_LEAFHEADER *)pageBuf;
+        {
+            AM_LEAFHEADER *header = (AM_LEAFHEADER *)pageBuf;
 
-        header->pageType = 'l';
-        header->nextLeafPage = AM_NULL_PAGE;
-        header->recIdPtr = PF_PAGE_SIZE;
-        header->keyPtr = AM_sl;
-        header->freeListPtr = AM_NULL;
-        header->numinfreeList = 0;
-        header->attrLength = ROLL_LENGTH;
-        header->numKeys = 0;
+            header->pageType = 'l';
+            header->nextLeafPage = AM_NULL_PAGE;
+            header->recIdPtr = PF_PAGE_SIZE;
+            header->keyPtr = AM_sl;
+            header->freeListPtr = AM_NULL;
+            header->numinfreeList = 0;
+            header->attrLength = ROLL_LENGTH;
+            header->numKeys = 0;
 
-        header->maxKeys =
-            (PF_PAGE_SIZE - AM_sl) /
-            (ROLL_LENGTH + AM_ss + AM_si + AM_ss);
+            header->maxKeys =
+                (PF_PAGE_SIZE - AM_sl) /
+                (ROLL_LENGTH + AM_ss + AM_si + AM_ss);
 
-        leaves[count].pageNum = pageNum;
+            leaves[count].pageNum = pageNum;
+            memcpy(leaves[count].firstKey,
+                   entries[i].roll, ROLL_LENGTH);
 
-        memcpy(leaves[count].firstKey,
-               entries[i].roll, ROLL_LENGTH);
+            j = i;
 
-        j = i;
+            while (j < total) {
+                /*
+                 * Find the complete run of identical keys beginning at j.
+                 * A key and all its RIDs must be stored in the same leaf.
+                 */
+                groupEnd = j + 1;
+                while (groupEnd < total &&
+                       memcmp(entries[j].roll,
+                              entries[groupEnd].roll,
+                              ROLL_LENGTH) == 0) {
+                    groupEnd++;
+                }
 
-        while (j < total) {
+                groupSize = groupEnd - j;
 
-            newKey = (j == i ||
-                memcmp(entries[j].roll,
-                       entries[j - 1].roll,
-                       ROLL_LENGTH) != 0);
+                /*
+                 * A new distinct key consumes:
+                 *   key bytes + head pointer + first RID-list node.
+                 * Each additional RID for this key consumes one RID-list
+                 * node (int RID + short next pointer).
+                 *
+                 * New pages have an empty freelist, so this is the exact
+                 * space requirement for the complete key group.
+                 */
+                required = ROLL_LENGTH + AM_ss +
+                           groupSize * (AM_si + AM_ss);
+                available = (int)header->recIdPtr -
+                            (int)header->keyPtr;
 
-            if (newKey) {
+                if (required > available) {
+                    if (j == i) {
+                        /*
+                         * The group cannot fit even on an empty leaf.
+                         * Do not split it, because doing so would create
+                         * duplicate separator keys in adjacent leaves.
+                         */
+                        printf(
+                            "Duplicate-key group of %d RIDs for key %.*s "
+                            "cannot fit in an empty leaf page\n",
+                            groupSize, ROLL_LENGTH, entries[j].roll
+                        );
+                        PF_UnfixPage(indexFd, pageNum, FALSE);
+                        return -1;
+                    }
+
+                    /* Finish this leaf; retry the entire group on next leaf. */
+                    break;
+                }
+
+                /* Every group placed in this leaf is a new distinct key. */
                 index = header->numKeys + 1;
-                required = ROLL_LENGTH + AM_ss + AM_si + AM_ss;
-            } else {
-                index = header->numKeys;
-                required = AM_si + AM_ss;
+
+                err = AM_InsertintoLeaf(
+                    pageBuf,
+                    ROLL_LENGTH,
+                    entries[j].roll,
+                    entries[j].rid,
+                    index,
+                    AM_NOT_FOUND
+                );
+
+                if (!err) {
+                    printf("Leaf insertion failed for key %.*s\n",
+                           ROLL_LENGTH, entries[j].roll);
+                    PF_UnfixPage(indexFd, pageNum, FALSE);
+                    return -1;
+                }
+
+                /*
+                 * Insert the remaining RIDs of this same key as duplicates.
+                 * AM_FOUND prepends each RID to the leaf's RID linked list.
+                 */
+                for (k = j + 1; k < groupEnd; k++) {
+                    err = AM_InsertintoLeaf(
+                        pageBuf,
+                        ROLL_LENGTH,
+                        entries[k].roll,
+                        entries[k].rid,
+                        index,
+                        AM_FOUND
+                    );
+
+                    if (!err) {
+                        printf(
+                            "Duplicate RID insertion failed for key %.*s "
+                            "at sorted entry %d\n",
+                            ROLL_LENGTH, entries[k].roll, k
+                        );
+                        PF_UnfixPage(indexFd, pageNum, FALSE);
+                        return -1;
+                    }
+                }
+
+                /* Advance only after the entire duplicate group is inserted. */
+                j = groupEnd;
             }
-
-            /* Check available space */
-            if ((header->recIdPtr - header->keyPtr) < required)
-                break;
-
-            err = AM_InsertintoLeaf(
-                pageBuf,
-                ROLL_LENGTH,
-                entries[j].roll,
-                entries[j].rid,
-                index,
-                newKey ? AM_NOT_FOUND : AM_FOUND
-            );
-
-            if (!err) {
-                printf("Leaf insertion failed at record %d\n", j);
-                PF_UnfixPage(indexFd, pageNum, 0);
-                return -1;
-            }
-
-            j++;
         }
 
         if (j == i) {
-            printf("No record could fit in leaf page %d\n", pageNum);
-            PF_UnfixPage(indexFd, pageNum, 0);
+            printf("No complete key group could fit in leaf page %d\n",
+                   pageNum);
+            PF_UnfixPage(indexFd, pageNum, FALSE);
             return -1;
         }
 
-        /* Link previous leaf to current leaf */
+        /* Link previous leaf to current leaf. */
         if (prevBuf != NULL) {
-
             AM_LEAFHEADER *prevHeader =
                 (AM_LEAFHEADER *)prevBuf;
 
             prevHeader->nextLeafPage = pageNum;
 
-            if (PF_UnfixPage(indexFd, prevPage, 1) < 0) {
+            if (PF_UnfixPage(indexFd, prevPage, TRUE) < 0) {
                 printf("Error unfixing previous leaf page\n");
-                PF_UnfixPage(indexFd, pageNum, 0);
+                PF_UnfixPage(indexFd, pageNum, FALSE);
                 return -1;
             }
         }
@@ -179,14 +247,13 @@ int buildLeafPages(int indexFd, LeafInfo *leaves,
     }
 
     if (prevBuf != NULL) {
-        if (PF_UnfixPage(indexFd, prevPage, 1) < 0) {
+        if (PF_UnfixPage(indexFd, prevPage, TRUE) < 0) {
             printf("Error writing last leaf page\n");
             return -1;
         }
     }
 
     *leafCount = count;
-
     return 0;
 }
 
@@ -415,7 +482,8 @@ int main()
     printf("\n========== BULK LEAF CONSTRUCTION ==========\n");
 
     /* Create a fresh index */
-    xAM_DestroyIndex("student_bulk", 0);
+    if (access("student_bulk.0", F_OK) == 0)
+        xAM_DestroyIndex("student_bulk", 0);
 
     err = xAM_CreateIndex(
         "student_bulk",
