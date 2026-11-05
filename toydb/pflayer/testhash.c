@@ -39,4 +39,5 @@ long j;
 
 	/* print the hash table out */
 	PFhashPrint();
+	return(0);
 }
