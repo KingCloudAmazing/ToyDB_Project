@@ -1,7 +1,0 @@
-configuration,method,max_record_length_M_bytes,records_per_page,pages_allocated,record_count,actual_payload_bytes,allocated_data_page_bytes,payload_utilization_percent,occupied_page_bytes,occupied_page_utilization_percent,reserved_record_bytes,record_padding_bytes,length_metadata_bytes,page_header_bytes,slot_directory_bytes,unused_page_bytes,pf_page_link_bytes,pf_file_header_bytes,estimated_pf_file_size_bytes,page_count_source
-Slotted pages,Slotted,,39.24 average,454,17813,1759011,1859584,94.59163985063326,1835711,98.71621825096365,1759011,0,0,5448,71252,23873,1816,8,1861408,test_student_pf output (PF page traversal; in-memory cross-check)
-Static M=108,Static,108,37,482,17813,1759011,1974272,89.09668981781638,1963286,99.44354172069502,1923804,164793,35626,3856,0,10986,1928,8,1976208,test_static_pf output
-Static M=112,Static,112,35,509,17813,1759011,2084864,84.37053927738212,2034754,97.5964859098723,1995056,236045,35626,4072,0,50110,2036,8,2086908,test_static_pf output
-Static M=128,Static,128,31,575,17813,1759011,2355200,74.68626868206522,2320290,98.51774796195652,2280064,521053,35626,4600,0,34910,2300,8,2357508,test_static_pf output
-Static M=160,Static,160,25,713,17813,1759011,2920448,60.23086184037518,2891410,99.00570049526648,2850080,1091069,35626,5704,0,29038,2852,8,2923308,test_static_pf output
-Static M=256,Static,256,15,1188,17813,1759011,4866048,36.14865697995581,4605258,94.64062006786617,4560128,2801117,35626,9504,0,260790,4752,8,4870808,test_static_pf output
