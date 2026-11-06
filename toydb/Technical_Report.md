@@ -1,24 +1,26 @@
-# ToyDB Storage Management
-## Technical Report: Slotted Pages, Static Records, PF Integration, and Space-Utilization Experiments
+# ToyDB DBMS Project
+## Integrated Technical Report: PF Buffer Management, Page Storage, and B+ Tree Access Methods
 
 **Project:** ToyDB DBMS Assignment  
-**Component:** Storage management  
+**Components:** Paged File (PF), slotted/static storage, and Access Method (AM)  
 **Dataset:** Supplied Student relation (`data/student.txt`)  
 **Page size:** 4,096 bytes  
 **Implementation language:** C  
-**Experiment tooling:** Python 3 and Matplotlib
+**Experiment tooling:** Python 3, Matplotlib, and OpenPyXL  
+**Validation snapshot:** 6 November 2026
 
-**Implementation guide:** [`slottedpage/README.md`](slottedpage/README.md)
+**Module guides:** [`pflayer/README.md`](pflayer/README.md) · [`slottedpage/README.md`](slottedpage/README.md) · [`amlayer/README.md`](amlayer/README.md)  
+**Benchmark guide:** [`amlayer/AM_BENCHMARK_README.md`](amlayer/AM_BENCHMARK_README.md)
 
 ---
 
 ## Abstract
 
-This report documents the design, implementation, validation, and experimental evaluation of two alternative Student-record storage organizations in ToyDB: variable-length slotted pages and fixed-slot static records. Both organizations are integrated with the existing Paged File (PF) layer and support persistent storage, record retrieval through record identifiers (RIDs), and sequential scanning.
+This report documents the architecture, implementation decisions, validation, and experimental evaluation of the integrated ToyDB DBMS assignment. It covers three cooperating subsystems: the Paged File (PF) layer and configurable buffer manager; persistent Student-record storage using slotted pages and fixed-slot static pages; and the Access Method (AM) layer used to build and search Student B+ tree indexes.
 
-The evaluation uses 17,813 records from the supplied Student dataset, representing 1,759,011 bytes of record payload after excluding the descriptive header line and line terminators. Static-record storage is evaluated at maximum record lengths of 108, 112, 128, 160, and 256 bytes. The slotted-page PF file uses 454 data pages and achieves 94.59% payload utilization. The best tested static configuration, `M=108`, uses 482 pages and achieves 89.10% payload utilization. Increasing the static maximum record length increases reserved padding and reduces payload utilization.
+The storage evaluation uses 17,813 records from `data/student.txt`, representing 1,759,011 bytes of record payload. The PF-backed slotted store uses 454 data pages and achieves 94.59% payload utilization. The best tested static configuration (`M=108`) uses 482 pages and achieves 89.10%. The PF experiments compare LRU and MRU over buffer capacities of 2, 4, 8, and 16 pages, and also evaluate five read/write mixes with a three-page buffer. The AM experiments compare one-shot insertion, incremental insertion, and sorted bulk loading, with 30 duplicate-key query measurements per construction method.
 
-The report also describes the integration boundary between the storage modules and the PF buffer manager, the RID encoding shared with the AM layer, the test strategy, and the reproducible experiment pipeline. PF performance graphs and AM/B+ tree indexing experiments are tracked as separate project deliverables and are not presented as completed results here.
+The report explains the page formats, buffer-frame and replacement-policy structure, AM leaf/internal-page organization, duplicate-key handling, root-capacity safeguards, scan traversal, experiment methodology, measured results, and test coverage. Results are deliberately interpreted within the limits of the tested datasets and access sequences. The current bulk loader supports a one-level internal root; multi-level internal-node construction is not implemented.
 
 ---
 
@@ -57,6 +59,18 @@ For the supplied dataset, slotted pages use 28 fewer pages than the best tested 
 
 These are space-allocation results. They do not, by themselves, prove that slotted pages are faster for all workloads.
 
+### 1.4 PF buffer management
+
+The PF buffer manager supports a configurable capacity (up to the existing 20-frame maximum), LRU and MRU replacement, fixed-page protection, dirty-page writeback, and counters for logical/physical I/O and buffer hits. Five PF correctness tests pass. For the fixed 12-reference capacity workload, increasing capacity from 2 to 8 pages reduces physical reads to five for both policies; increasing capacity further to 16 does not improve that sequence. A separate 20-operation read/write workload compares five read/write mixes using a three-page buffer.
+
+### 1.5 AM/B+ tree indexing
+
+The AM work covers one-shot index construction, incremental insertion, and sorted-file bulk loading. The bulk loader stores equal roll-number groups together in a leaf, links leaf pages, constructs a capacity-checked single internal root, and supports an `ALL` scan that discovers the first leaf by following `Child0`. The supplied data produces 71 leaf pages and 70 root separators. G1-G4 regression tests cover duplicate grouping, a synthetic page-boundary case, root overflow handling, and leftmost-leaf traversal.
+
+### 1.6 Integrated status
+
+The root build and test workflow covers PF, storage, and AM modules. The final validation run completed the PF correctness/experiment workflow, slotted/static storage tests, the three legacy AM tests, the AM benchmark, and the boundary/capacity regressions. The module-specific experiment runners also generated CSV, Excel, graph, and Markdown artifacts under `experiments/storage/`.
+
 ---
 
 ## 2. Scope, Objectives, and Current Project Status
@@ -72,13 +86,13 @@ The storage work covers:
 5. A static-record alternative with configurable maximum slot length.
 6. Dataset-level validation and a comparison of space usage.
 
-### 2.2 Status boundary
+### 2.2 Integrated project status
 
-The slotted-page and static-record implementations and their storage experiments are complete and have been rerun successfully in the integrated branch containing the shared PF changes.
+The integrated project contains three implemented subsystems: PF file/buffer management, slotted/static Student storage, and AM/B+ tree indexing. Their module-specific designs and experiment results are included in Sections 15-18 of this report and in the module READMEs.
 
-The PF buffer manager includes configurable buffer capacity and LRU/MRU selection. Its correctness tests have passed. Final PF workload statistics and performance graphs are tracked separately.
+The PF buffer manager includes configurable capacity, LRU/MRU replacement, fixed-page protection, dirty writeback, and statistics. The slotted and static storage managers provide PF-backed persistence, RID retrieval, and scanning. The AM layer includes three construction paths, duplicate-aware sorted bulk loading, root capacity validation, and dynamic leftmost-leaf discovery.
 
-The AM/B+ tree tasks—existing-file index construction, incremental insertion validation, sorted bulk loading, internal-node/root construction, duplicate-key tests, and index benchmarking—are also separate deliverables. They are not included as completed implementation or experimental results in this storage report.
+Two items remain intentionally outside the implemented scope: the additional G5 error-handling/format-string cleanup was deferred, and G6 RID-to-Student payload verification was not added as a separate regression. Most importantly, the current sorted bulk loader creates a single internal root above the leaf level; it does not build multiple internal levels. These boundaries are stated explicitly rather than being presented as completed features.
 
 ---
 
@@ -90,32 +104,42 @@ The storage design separates page organization from file management.
 
 ```mermaid
 flowchart TD
-    D["Student dataset / application"] --> API["Storage API"]
-    API --> S["Slotted-page store"]
-    API --> R["Static-record store"]
-    S --> SP["Slotted-page manager"]
-    R --> RP["Static-page manager"]
-    SP --> PF["PF file layer"]
-    RP --> PF
-    PF --> BM["PF buffer manager"]
-    BM --> DISK["PF-backed data file"]
+    APP["Student dataset / application"]
+    APP --> SAPI["Student storage APIs<br/>(slotted / static)"]
+    APP --> AMAPI["AM index APIs<br/>(one-shot / incremental / bulk)"]
+    SAPI --> SLOT["Slotted page manager"]
+    SAPI --> STAT["Static page manager"]
+    AMAPI --> KR["Student key + RID pairs"]
+    KR --> BT["B+ tree pages<br/>internal root (one level)<br/>linked leaf pages"]
+    SLOT --> PF["PF file API"]
+    STAT --> PF
+    BT --> PF
+    PF --> BUF["PF buffer manager<br/>(hash + frame recency list)"]
+    BUF --> FILES[("PF page files")]
 ```
+
+The AM index and Student data file are separate PF files. Leaf entries map a roll-number key to one or more Student RIDs; the RID is the physical page/slot locator in the Student storage file.
 
 The page-level functions operate on a caller-provided 4,096-byte buffer. They do not open or write files. The store-level wrappers obtain PF pages, invoke the page-level functions, and unfix the pages with the appropriate dirty flag.
 
 ### 3.2 Main source modules
 
-| File | Responsibility |
+| File / directory | Responsibility |
 |---|---|
-| `slotted_page.c/.h` | Page initialization, insertion, retrieval, deletion, compaction, and validation for variable-length records |
-| `student_store.c/.h` | PF-backed slotted Student file and sequential scan |
-| `static_page.c/.h` | Fixed-slot page initialization, insertion, retrieval, and metadata |
-| `static_store.c/.h` | PF-backed static-record store, scan, and storage statistics |
-| `rid.h` | Shared page-number/slot-number RID encoder and decoder |
-| `pf_api.h` | Typed declarations matching the legacy PF layer |
-| `pflayer/pf.c` | PF file operations and page allocation/retrieval |
-| `pflayer/buf.c` | PF buffer management, dirty-page handling, and replacement policy |
-| `experiments/storage/generate_storage_comparison.py` | Reproducible storage experiment runner and graph generation |
+| `pflayer/pf.c`, `pflayer/pf.h` | PF file creation/open/close, page allocation, page lookup, page disposal, and PF-to-buffer-manager calls |
+| `pflayer/buf.c` | Buffer-frame lookup, allocation/replacement, fixed/dirty state, writeback, configurable capacity/policy, and statistics |
+| `pflayer/hash.c` | Hash table mapping an open-file/page pair to a buffer frame |
+| `pflayer/pftypes.h` | PF file-page, open-file, buffer-frame, hash-entry, and policy declarations |
+| `slottedpage/slotted_page.c/.h` | Variable-length slotted-page initialization, insert/retrieve/delete/compact, and validation |
+| `slottedpage/student_store.c/.h` | PF-backed slotted Student file and sequential scan |
+| `slottedpage/static_page.c/.h` | Fixed-slot static-page operations |
+| `slottedpage/static_store.c/.h` | PF-backed static-record store, scanning, and storage statistics |
+| `slottedpage/rid.h`, `pf_api.h` | Shared RID encoder/decoder and typed legacy-PF declarations |
+| `amlayer/am.c`, `amsearch.c`, `aminsert.c`, `amscan.c` | AM index lifecycle, search/routing, leaf insertion/deletion support, and index scans |
+| `amlayer/test_student_am_bulk.c` | Student-specific sorted bulk loader and G1-G4 regressions |
+| `experiments/storage/run_pf_experiments.py` | PF correctness/experiment automation and result generation |
+| `experiments/storage/run_am_experiments.py` | AM regressions, benchmark execution, and result generation |
+| `experiments/storage/generate_storage_comparison.py` | Storage test execution, accounting, CSV, and graph generation |
 
 ### 3.3 PF and buffer-manager boundary
 
@@ -123,11 +147,11 @@ The PF layer manages pages belonging to a PF file. The buffer manager holds a li
 
 The storage-space experiment counts **allocated PF data pages**. It does not count buffer frames. LRU/MRU selection can affect the number of PF-layer reads and writes under a workload, but it does not change the page format or the deterministic number of data pages needed to store this dataset.
 
-The PF implementation exposes `PFbufSetCapacity()` and `PFbufSetPolicy()`. `PF_LRU` and `PF_MRU` select the replacement policy; the default policy is LRU and the default capacity is `PF_MAX_BUFS` (20 frames). The statistics interface exposes logical reads/writes, physical reads/writes, and buffer hits. The final PF workload graphs and interpretation are tracked separately from the storage-space experiment.
+The PF implementation exposes `PFbufSetCapacity()` and `PFbufSetPolicy()`. `PF_LRU` and `PF_MRU` select the replacement policy; the default policy is LRU and the default capacity is `PF_MAX_BUFS` (20 frames). Statistics can be reset and read through the PF buffer statistics interface. The PF replacement-policy and read/write experiment results are reported in Section 17 and documented in [`pflayer/README.md`](pflayer/README.md).
 
-This distinction is important: the storage comparison in this report is not an LRU-versus-MRU performance experiment.
+The storage-space comparison remains a separate measurement: it counts allocated 4,096-byte data pages and payload bytes, not buffer hits or page I/O. Buffer replacement policy affects the measured I/O behaviour for an access sequence, not the deterministic page count of the storage layout.
 
-### 3.3 PF page-file representation
+### 3.4 PF page-file representation
 
 The storage modules work with a 4,096-byte PF page buffer. In the tested Linux build, each stored PF page also carries a 4-byte `nextfree` integer field, and the PF file begins with an 8-byte header. The estimated PF file size is:
 
@@ -182,14 +206,12 @@ Each slot descriptor is 4 bytes:
 
 The slot directory grows from the beginning of the page toward higher offsets. Record payload bytes are placed from the end of the page toward lower offsets.
 
-```text
-Offset 0                                                         Offset 4095
-┌─────────────────────┬──────────────────────┬────────────────────────────┐
-│ 12-byte header      │ Slot directory       │ Variable-length records    │
-│                     │ grows forward  --->  │ packed from page end  <--- │
-└─────────────────────┴──────────────────────┴────────────────────────────┘
-                      ^ free_start              free_end ^
-                         contiguous free bytes
+```mermaid
+flowchart LR
+    subgraph PAGE["Slotted page (offset 0 to 4095)"]
+        direction LR
+        H["12-byte header"] ~~~ SD["Slot directory<br/>grows forward ➜"] ~~~ FREE["Contiguous free bytes<br/>(free_start to free_end)"] ~~~ REC["Variable-length records<br/>packed from page end ⬅"]
+    end
 ```
 
 `free_start` is determined by the header and slot-directory size. `free_end` identifies the boundary of the packed record region.
@@ -331,10 +353,12 @@ Static pages use an 8-byte header:
 
 Each record slot stores a 2-byte actual-length field followed by a reserved `M`-byte data region:
 
-```text
-┌───────────────────────────┬────────────────────────────────────────┐
-│ 2-byte actual record size │ M-byte reserved record payload area    │
-└───────────────────────────┴────────────────────────────────────────┘
+```mermaid
+flowchart LR
+    subgraph SLOT["One static record slot"]
+        direction LR
+        L["2-byte actual record size"] ~~~ P["M-byte reserved record payload area"]
+    end
 ```
 
 If a record uses fewer than `M` bytes, the rest of the reserved area is padding. The actual-length prefix allows retrieval to return only the record's meaningful bytes.
@@ -441,7 +465,7 @@ Payload utilization deliberately counts only actual Student bytes in the numerat
 
 ### 8.3 Automated experiment pipeline
 
-The script `experiments/storage/generate_storage_comparison.py` makes the experiment reproducible. It:
+The script `experiments/storage/generate_storage_comparison.py` makes the experiment reproducible. It builds and runs the storage tests in a temporary copy, leaving the working source tree out of the experiment build path. It:
 
 1. Locates and validates `student.txt`.
 2. Executes `make clean`.
@@ -507,17 +531,17 @@ This distinction explains why a configuration can have large record padding but 
 
 ### 9.3 Generated graph: allocated pages
 
-![Data pages allocated](experiments/storage/storage_pages_comparison.png)
+![Data pages allocated](experiments/storage/slotted_page/storage_pages_comparison.png)
 
 ### 9.4 Generated graph: payload utilization
 
-![Payload utilization](experiments/storage/storage_payload_utilization.png)
+![Payload utilization](experiments/storage/slotted_page/storage_payload_utilization.png)
 
 The source measurements and full experiment output are retained in:
 
-- `experiments/storage/storage_comparison.csv`
-- `experiments/storage/storage_test_results.txt`
-- `experiments/storage/storage_comparison_notes.md`
+- `experiments/storage/slotted_page/storage_comparison.csv`
+- `experiments/storage/slotted_page/storage_test_results.txt`
+- `experiments/storage/slotted_page/storage_comparison_notes.md`
 
 The estimated PF file sizes, including the 4-byte per-page wrapper field and 8-byte file header, are:
 
@@ -670,15 +694,24 @@ After the PF changes from the shared main branch were merged into the slotted-pa
 
 - Linux environment.
 - C compiler and `make`.
-- Python 3.
-- Matplotlib.
+- Python 3 with `venv` and `pip`.
+- Matplotlib and OpenPyXL for experiment graphs/workbooks.
 - Supplied `data/student.txt`.
 
-On Ubuntu:
+On Ubuntu, install the build and Python environment tools:
 
 ```bash
 sudo apt update
-sudo apt install build-essential make python3 python3-matplotlib
+sudo apt install build-essential make python3 python3-venv python3-pip
+```
+
+From the repository root, create the virtual environment and install the shared experiment dependencies:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r toydb/experiments/storage/requirements.txt
 ```
 
 ### 12.2 Run storage regression tests
@@ -722,19 +755,17 @@ Remove retained test database files after inspection; they are generated data, n
 
 ---
 
-## 13. Limitations and Work Outside This Report
+## 13. Storage-Specific Limitations
 
-The following topics are intentionally not assigned invented measurements in this report:
+The storage-space experiment measures allocated PF data pages, payload utilization, reserved padding, and page-structure overhead. It does not compare insertion latency, lookup latency, deletion cost, CPU time, or scan throughput between slotted and static storage. Those are separate workload measurements and should not be inferred from page-count results.
 
-1. **PF performance graphs:** buffer capacity, LRU/MRU, and buffer statistics are implemented and correctness-tested, but the final PF workload-statistics graphs and their analysis are a separate deliverable.
-2. **AM/B+ tree indexing:** existing-file index construction, incremental insertion verification, sorted bulk loading, internal levels/root metadata, duplicate-key behaviour, search validation, and index performance comparisons are still tracked separately.
-3. **Cross-component finalization:** the completed storage branch still needs to be integrated with the final AM/indexing work, followed by a complete project-level regression and submission packaging.
+The static comparison covers the selected maximum record lengths `M=108,112,128,160,256`; it does not establish that one of those values is optimal for every possible Student dataset. Likewise, the slotted-page space advantage is demonstrated for the supplied 17,813-record Student dataset and the reported accounting definitions.
 
-These are project-scope boundaries, not claims that the storage subsystem is incomplete.
+PF I/O and AM index performance are evaluated separately in Sections 15-17. The AM-specific one-level-root limitation and deferred items are listed in Section 19.
 
 ---
 
-## 14. Conclusion
+## 14. Storage Subsystem Conclusion
 
 The project implements two persistent Student-record storage alternatives over the ToyDB PF layer. The slotted-page design supports variable-length records, tombstone-based deletion, slot reuse, compaction, RID retrieval, and sequential scanning. The static-record design reserves a configurable maximum record area per slot and supports PF-backed insertion, retrieval, scanning, and storage measurement.
 
@@ -742,6 +773,402 @@ Both designs passed their page-level and PF-backed dataset tests. All 17,813 Stu
 
 For the supplied variable-length Student dataset, slotted pages provide the best space utilization among the tested configurations. The unified experiment runner preserves the provenance of the measurements by extracting the page counts and storage figures from the C test output and regenerating the CSV and graphs from those measurements.
 
+---
+
+## 15. Paged File Layer and Buffer Manager
+
+### 15.1 Responsibility and page-file representation
+
+The PF layer is the common file/page interface used by both Student storage formats and the AM index files. It provides file creation, destruction, opening/closing, page allocation, page lookup, page disposal, and page unfix operations. The higher layers work with a `PF_PAGE_SIZE` page buffer; the tested build uses 4,096-byte page data.
+
+The file representation has an 8-byte PF file header containing the first free-page link and the page count. Each on-disk PF page is represented by a 4-byte `nextfree` field followed by the 4,096-byte page buffer. The `nextfree` field participates in PF free-page management; it is not part of the slotted/static/AM page payload layout.
+
+```mermaid
+flowchart TD
+    subgraph FILE["PF file"]
+        direction TB
+        HDR["PF file header (2 integers)<br/>first-free page, page count"]
+        subgraph P0["PFfpage 0"]
+            direction TB
+            N0["nextfree (4 bytes)"]
+            B0["pagebuf (4096 bytes)"]
+        end
+        subgraph P1["PFfpage 1"]
+            direction TB
+            N1["nextfree (4 bytes)"]
+            B1["pagebuf (4096 bytes)"]
+        end
+        MORE["..."]
+        HDR --> P0 --> P1 --> MORE
+    end
+```
+
+The PF layer therefore separates file-level bookkeeping from the 4,096-byte page buffer passed to a higher-level page manager.
+
+\newpage
+
+### 15.2 Buffer-frame architecture
+
+The buffer manager keeps a bounded set of in-memory `PFbpage` frames. A frame records the owning file descriptor and page number, the page contents, and two state flags:
+
+- `fixed`: the page is currently pinned by a caller and cannot be selected as a replacement victim.
+- `dirty`: the page contents have been modified and must be written back before the frame is reused or released.
+
+A hash table maps an `(open file descriptor, page number)` pair to its in-memory frame. This avoids scanning every frame to determine whether a requested page is already resident. A doubly linked used-frame list tracks recency. The list head is the most recently used end because newly linked/accessed frames are moved to the head; the tail is the least recently used end.
+
+```mermaid
+flowchart TD
+    REQ["PF_GetThisPage / PF_AllocPage / PF_UnfixPage"] --> PFL["PF file layer"]
+    PFL --> LOOK["Buffer manager lookup"]
+    LOOK --> HT["Hash table<br/>(fd, page)"]
+    LOOK --> RL["Recency list<br/>MRU head ➜ LRU tail"]
+    HT --> FR
+    RL --> FR
+    subgraph FR["PFbpage frame"]
+        direction TB
+        F1["file descriptor, page number"]
+        F2["fixed flag, dirty flag"]
+        F3["PF page data"]
+        F1 --- F2 --- F3
+    end
+    FR --> IO[("Disk<br/>read / write callback")]
+```
+
+The hash table and recency list serve different purposes: the hash table locates a resident page, while the list identifies a replacement candidate. Frames marked `fixed` are skipped by the victim search. If every frame is fixed, allocation cannot safely evict a page and returns the buffer-exhaustion error.
+
+### 15.3 Capacity and replacement-policy decisions
+
+The implementation adds `PFbufSetCapacity()` and `PFbufSetPolicy()` without changing the 20-frame compile-time upper bound (`PF_MAX_BUFS`). The default capacity is 20 frames and the default policy is LRU. The configurable capacity is constrained to a positive value no greater than `PF_MAX_BUFS`, and it cannot be lowered below the number of frames already allocated.
+
+The supported policy constants are:
+
+| Policy | Value | Victim search |
+|---|---:|---|
+| `PF_LRU` | 0 | Scan from the list tail toward the head and choose the least-recently-used unfixed frame |
+| `PF_MRU` | 1 | Scan from the list head toward the tail and choose the most-recently-used unfixed frame |
+
+When the pool is below its configured capacity, a free frame is allocated. At capacity, the replacement search selects an unfixed victim. If the victim is dirty, the PF write callback is invoked before the frame is detached from its old page identity and reused. Dirty pages are also written as part of file-close/release handling. This preserves the rule that a modified page is not silently discarded.
+
+The design exposes both LRU and MRU because their relative behaviour depends on the access sequence. The experiments do not assume one policy is universally superior.
+
+### 15.4 Buffer statistics
+
+The statistics interface provides reset, retrieval, and printing operations. The reported fields are:
+
+| Metric | Meaning in the experiment output |
+|---|---|
+| Logical reads | Calls requesting pages through the PF buffer/page interface in the measured workload |
+| Logical writes | Dirty-page unfix operations in the read/write workload |
+| Physical reads | Page reads from the PF file into the buffer, as reported by the PF counters |
+| Physical writes | Dirty-page writes to the PF file, including writeback on close where the workload collects counters after closing |
+| Buffer hits | Requests satisfied by a page already resident in the buffer |
+| Hit ratio | `buffer hits / logical reads * 100` for the given workload definition |
+
+The PF workload runner explicitly notes that it calls `PF_GetThisPage()` once for every operation, including operations that subsequently modify the page. Thus `logical_reads` is 20 in every 20-operation read/write workload; the separate `read_operations` and `write_operations` fields describe the intended read/write mix. `logical_writes` counts dirty unfix operations.
+
+### 15.5 PF correctness tests
+
+The automated PF runner builds a temporary copy of the PF sources and executes five correctness tests:
+
+1. `testhash` - hash-table/page lookup behaviour.
+2. `testpf` - PF file/page operations, allocation, disposal, and retrieval.
+3. `testbuf` - buffer capacity, fixed-page protection, hits, dirty eviction, close-time flush, replacement-policy selection, and invalid configuration.
+4. `teststats` - logical/physical I/O counters, hits, and statistics reset.
+5. `testlru` - strict LRU victim selection.
+
+The supplied result file reports all five tests as passing with exit code zero. The PF Makefile also runs the capacity and read/write experiments described in Section 17.
+
+---
+
+## 16. Access Method Layer and Student B+ Tree Indexing
+
+### 16.1 Role of the AM layer
+
+The AM layer stores and searches indexes over keys while returning the record identifiers associated with those keys. For the Student dataset, the indexed key is the eight-character roll number extracted from the second semicolon-separated field. The Student record itself is stored through the slotted-page Student store; the AM leaf stores the roll-number key and the Student RID, rather than duplicating the full Student record.
+
+This separation keeps the key lookup structure distinct from the record storage structure:
+
+```mermaid
+flowchart TD
+    ROW["Student row"]
+    ROW --> STORE["Slotted Student store"]
+    STORE --> REC["Persistent record"]
+    REC --> RID["Student RID"]
+    ROW --> KEY["Roll number<br/>(8-byte key)"]
+    KEY --> PAIR["Key + Student RID"]
+    RID --> PAIR
+    PAIR --> IDX[("AM B+ tree index file")]
+```
+
+The RID is a physical locator encoded as `(pageNum << 10) | (slotNum + 1)`. It is not the roll number. The shared RID convention makes the AM result usable by the Student storage layer for record retrieval.
+
+### 16.2 Leaf-page structure
+
+An AM leaf page begins with `AM_LEAFHEADER`. Its fields include the page type (`'l'`), next-leaf page number, record-ID pointer, key pointer, free-list pointer and count, attribute length, current key count, and maximum-key metadata.
+
+The sorted key entries grow forward from the leaf header. Each key entry stores the fixed-length key and a short pointer to the head of its RID list. RID-list nodes are allocated from the opposite end of the page; a node stores an integer RID and a short link to the next node. The leaf's `nextLeafPage` field links leaves in key order for range and `ALL` scans.
+
+For a key that appears more than once, the leaf keeps one key entry and a linked list of all associated RIDs. `AM_FOUND` insertion prepends a new RID-list node to the existing key's list. The leaf free-list metadata supports reuse of released RID-list nodes; compaction can consolidate the RID-list region when required by the legacy insertion routines.
+
+### 16.3 Internal-page layout and search routing
+
+An internal page begins with `AM_INTHEADER` and stores child pointers interleaved with separator keys:
+
+```mermaid
+flowchart LR
+    C0["Child0"] ~~~ K0(["Key0"]) ~~~ C1["Child1"] ~~~ K1(["Key1"]) ~~~ C2["Child2"] ~~~ MORE["..."]
+    classDef child fill:#dbeafe,stroke:#1d4ed8,color:#111;
+    classDef key fill:#fef3c7,stroke:#b45309,color:#111;
+    class C0,C1,C2 child;
+    class K0,K1 key;
+```
+
+Each separator is the first key in the child immediately to its right. Search starts at the first PF page (the root), reads the internal header, binary-searches the separator keys, follows the selected child pointer, and repeats until it reaches a leaf. The leaf search then locates the key and its RID-list head. This is the routing convention used by the existing `AM_BinSearch()` and leaf-search routines.
+
+### 16.4 Three index-construction paths
+
+The assignment compares three ways of constructing the Student index:
+
+| Method | Construction approach | Architectural distinction |
+|---|---|---|
+| One-shot insertion | Load the Student records first, then build the index by inserting their key/RID pairs | Separates record loading from index construction |
+| Incremental insertion | Insert each key/RID pair into the index as Student records are loaded | Interleaves record storage and index maintenance |
+| Sorted bulk loading | Store records and collect key/RID pairs, sort the pairs by roll number, then create leaf pages and the root in order | Uses sorted input to construct packed leaf pages directly |
+
+The bulk loader is implemented in the Student-specific bulk test program. It reads the supplied dataset, skips its descriptive first line, parses the second field as the eight-character roll number, inserts the complete Student row into the slotted store, and retains the corresponding RID with the key. It sorts the `(roll number, RID)` entries before allocating and populating leaf pages. Leaf pages are linked using `nextLeafPage`; the root page is then populated with child pointers and the first key of each right child as separator.
+
+### 16.5 G1 - duplicate-key groups remain in one leaf
+
+A duplicate roll number must not be split across adjacent leaves. If only part of the duplicate group fit in the current leaf, the older implementation could create the same separator key in adjacent leaves and make equality routing ambiguous. The corrected bulk loader first determines the complete run of equal keys, calculates the space required for the whole group, and inserts all RIDs together. If the group does not fit in the remaining free space, the current leaf is finished and the whole group is retried on the next leaf. If the group cannot fit even in an empty leaf, construction fails rather than splitting it.
+
+A leaf stores one distinct key entry and the associated RID-list nodes. The space calculation accounts for the key, its list-head pointer, and every RID/link node in the group.
+
+### 16.6 G2 - synthetic duplicate-boundary regression
+
+The synthetic regression creates a case that is not dependent on the incidental duplicate distribution of the supplied dataset. It places 253 distinct single-RID keys before a duplicate group of four RIDs. The constructed boundary leaves 24 bytes available, while the complete duplicate group requires 34 bytes. The test verifies that the group starts intact on the next leaf, that the preceding distinct key remains searchable, and that all four duplicate RIDs are returned. The `ALL` scan over the synthetic index returns all 257 entries.
+
+### 16.7 G3 - root capacity validation and explicit tree-depth limit
+
+For the current eight-byte roll-number key and the AM page-header layout, the single internal root can hold 340 separator keys and therefore 341 child-page pointers. The capacity is calculated from the available 4,096-byte page area rather than being treated as an unbounded structure. Root construction rejects more than 341 children before modifying the root page.
+
+The capacity regression accepts exactly 341 children and verifies that a request for 342 is rejected without changing the existing root page. This is a deliberate bounded implementation: the bulk loader currently supports one internal root above the leaves. It does not allocate additional internal levels when the leaf count exceeds the root capacity.
+
+The supplied Student dataset creates 71 leaf pages and 70 root separators, so it fits comfortably within the 341-child limit. The test's overflow case is a boundary/guard test, not evidence that multi-level construction is implemented.
+
+### 16.8 G4 - dynamic leftmost-leaf discovery
+
+The earlier scan implementation assumed that the first leaf always occupied PF page 2. That depended on a dummy page being reserved and was not a valid structural property of a B+ tree. The corrected `GetLeftPageNum()` starts from the root page and repeatedly reads the first child pointer (`Child0`) until it reaches a leaf. It validates page types and invalid/self child pointers and has a bounded descent guard.
+
+The bulk-loader test no longer needs a dummy page between the root and first leaf. The `ALL` scan regression verifies that sequential index scanning begins at the structurally identified leftmost leaf and returns the expected number of entries.
+
+### 16.9 AM validation scope
+
+The automated AM experiment runner executes the three legacy correctness programs (`test1`, `test2`, and `test3`), then builds and runs the Student bulk-loader program in three modes: the full-dataset regression, the synthetic duplicate-boundary regression, and the root-capacity regression. The full-dataset run checks the known duplicated roll numbers `97305818`, `99302001`, and `99310001`, each expected twice, and verifies the full `ALL` scan count of 17,813. The other modes exercise G2/G4 and G3 respectively.
+
+The additional G5 format-string/error-handling cleanup and the proposed G6 RID-to-Student payload cross-check were intentionally deferred from the chosen scope. This report does not claim that the separate G6 verification was completed.
+
+---
+
+## 17. PF and AM Experimental Results
+
+### 17.1 PF capacity and replacement-policy experiment
+
+The capacity experiment runs the same twelve-page-reference sequence for every combination of policy and capacity:
+
+```text
+0, 1, 2, 3, 0, 1, 4, 0, 1, 2, 3, 4
+```
+
+The policies are LRU and MRU; capacities are 2, 4, 8, and 16 frames. Each configuration performs 12 logical page requests. Physical writes are zero because this experiment only reads pages.
+
+| Policy | Capacity (pages) | Logical reads | Physical reads | Hits | Hit ratio |
+|---|---:|---:|---:|---:|---:|
+| LRU | 2 | 12 | 12 | 0 | 0.00% |
+| LRU | 4 | 12 | 8 | 4 | 33.33% |
+| LRU | 8 | 12 | 5 | 7 | 58.33% |
+| LRU | 16 | 12 | 5 | 7 | 58.33% |
+| MRU | 2 | 12 | 10 | 2 | 16.67% |
+| MRU | 4 | 12 | 6 | 6 | 50.00% |
+| MRU | 8 | 12 | 5 | 7 | 58.33% |
+| MRU | 16 | 12 | 5 | 7 | 58.33% |
+
+![PF buffer capacity versus physical reads](experiments/storage/pf_layer/capacity_vs_physical_reads.png)
+
+![PF buffer capacity versus hit ratio](experiments/storage/pf_layer/capacity_vs_hit_ratio.png)
+
+![LRU versus MRU physical reads](experiments/storage/pf_layer/lru_vs_mru_comparison.png)
+
+For this specific sequence, increasing capacity from 2 to 8 reduces physical reads under both policies. At capacity 8, the buffer can retain the five distinct pages touched by the sequence; increasing capacity to 16 does not reduce physical reads further. MRU records fewer reads than LRU at capacities 2 and 4 in this sequence; at capacities 8 and 16, the results are identical. These observations are workload-specific and do not establish that MRU is generally better than LRU.
+
+### 17.2 PF read/write workload experiment
+
+The second PF workload uses five pages, a three-frame buffer, and 20 operations per workload. The read/write mix is changed while the page-access pattern remains cyclic. The C workload test calls `PF_GetThisPage()` once per operation and then either unfixes the page clean or modifies it and unfixes it dirty. Consequently, `logical_reads` is 20 in all rows; `logical_writes` tracks the number of dirty unfix operations. Physical write counters are collected after close so that dirty flushes at close are included.
+
+| Workload | Policy | Logical reads | Logical writes | Physical reads | Physical writes | Hits | Hit ratio |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 100R / 0W | LRU | 20 | 0 | 20 | 0 | 0 | 0.00% |
+| 100R / 0W | MRU | 20 | 0 | 12 | 0 | 8 | 40.00% |
+| 75R / 25W | LRU | 20 | 5 | 20 | 5 | 0 | 0.00% |
+| 75R / 25W | MRU | 20 | 5 | 12 | 5 | 8 | 40.00% |
+| 50R / 50W | LRU | 20 | 10 | 20 | 10 | 0 | 0.00% |
+| 50R / 50W | MRU | 20 | 10 | 12 | 10 | 8 | 40.00% |
+| 25R / 75W | LRU | 20 | 15 | 20 | 15 | 0 | 0.00% |
+| 25R / 75W | MRU | 20 | 15 | 12 | 11 | 8 | 40.00% |
+| 0R / 100W | LRU | 20 | 20 | 20 | 20 | 0 | 0.00% |
+| 0R / 100W | MRU | 20 | 20 | 12 | 12 | 8 | 40.00% |
+
+![PF read/write workload physical reads](experiments/storage/pf_layer/workload_physical_reads.png)
+
+![PF read/write workload physical writes](experiments/storage/pf_layer/workload_physical_writes.png)
+
+For this cyclic five-page workload with a three-page buffer, LRU records 20 physical reads and no hits for all five mixes. MRU records 12 physical reads and 8 hits for every mix. Physical writes rise with the number of write operations; the MRU 25R/75W and write-only cases record 11 and 12 physical writes respectively, while LRU records 15 and 20. Dirty pages may be written when evicted or when the file closes, so physical writes need not equal logical writes one-for-one. The measured result describes this test sequence and its buffer configuration, not all possible database workloads.
+
+### 17.3 AM index-construction benchmark
+
+The AM benchmark compares the three construction paths using the same Student dataset. The build-time measurement wraps the complete existing construction program; it includes Student record-storage preparation and the method-specific index construction. It is therefore an end-to-end measurement rather than a timer around only the B+ tree insertion loop.
+
+| Construction method | End-to-end build time |
+|---|---:|
+| One-shot | 0.070 s |
+| Incremental | 0.070 s |
+| Sorted bulk load | 0.050 s |
+
+![AM B+ tree construction time](experiments/storage/am_layer/graphs/construction_time.png)
+
+The measured bulk-load run is 0.02 seconds lower than the one-shot and incremental runs in this validation snapshot. Since the measured durations are short and are single reported end-to-end values per method in the supplied `build_time.csv`, this should be treated as an observation for this run, not as a statistically established speedup.
+
+### 17.4 AM duplicate-key query benchmark
+
+The common equality query searches for roll number `97305818`, which occurs twice in the supplied dataset. Thirty independent measurements are collected per construction method. Each measurement is performed in a fresh process; the timed interval includes opening the index scan, retrieving the matching RIDs, and closing the scan. Process startup and opening the PF index file are outside the timed interval. The median is used for the reported latency.
+
+| Construction method | Runs | Median query time | Median logical page accesses | Median physical page reads | Matches |
+|---|---:|---:|---:|---:|---:|
+| One-shot | 30 | 22 μs | 6 | 3 | 2 |
+| Incremental | 30 | 28 μs | 6 | 3 | 2 |
+| Sorted bulk load | 30 | 23 μs | 6 | 3 | 2 |
+
+![AM duplicate-key query latency](experiments/storage/am_layer/graphs/query_time.png)
+
+![AM page accesses for duplicate-key query](experiments/storage/am_layer/graphs/page_accesses.png)
+
+All three methods returned the expected two matching RIDs. The measured median logical and physical page-access counts are identical for the selected query. The latency differences are measured in single-digit microseconds and should not be over-interpreted. The raw 90 measurements are retained in `experiments/storage/am_layer/query_metrics.csv`.
+
+### 17.5 Results interpretation boundaries
+
+The storage experiment measures space allocation, not latency. The PF experiments use two short, fixed page-reference workloads and should not be generalized to arbitrary traces. The AM build times include Student storage preparation, and only one build-time value per method is retained in the supplied CSV. AM query latency is repeated 30 times per method, but all measurements target one duplicate key. These boundaries are necessary for a fair reading of the graphs and tables.
+
+---
+
+## 18. Integrated Build, Test, and Experiment Reproduction
+
+### 18.1 Python environment
+
+From the repository root, create and activate a virtual environment and install the experiment dependencies:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r toydb/experiments/storage/requirements.txt
+```
+
+The requirements file includes Matplotlib for graph generation and OpenPyXL for Excel workbooks. The C build requires a compiler and Make; the scripts also use Python 3 and standard-library modules.
+
+### 18.2 Run individual experiment workflows
+
+Run these from the repository root:
+
+```bash
+# PF correctness tests plus capacity and read/write experiments
+python toydb/experiments/storage/run_pf_experiments.py
+
+# AM legacy tests, G1-G4 Student regressions, and B+ tree benchmarks
+python toydb/experiments/storage/run_am_experiments.py --force
+
+# Slotted/static storage tests, accounting, CSV, graphs, and notes
+python toydb/experiments/storage/generate_storage_comparison.py --force
+```
+
+The PF and AM experiment runners compile and execute temporary project copies. The storage generator likewise performs its experiment build in a temporary copy. This prevents experiment-specific compilation and temporary data files from being mixed with the main working tree. Results are written under:
+
+```text
+toydb/experiments/storage/
+    pf_layer/
+    am_layer/
+    slotted_page/
+```
+
+The `--force` flag reruns the experiment and replaces its generated results. Without it, a runner may validate a complete result set and skip unnecessary regeneration.
+
+### 18.3 Root build and regression commands
+
+The root Makefile provides the unified commands:
+
+```bash
+make build
+make test
+```
+
+Module-focused tests can be run with:
+
+```bash
+make test-pf
+make test-storage
+make test-am
+```
+
+`make test` runs the PF, storage, and AM module workflows and prints `ALL TESTS COMPLETED` when the target sequence exits successfully. The submitted validation run showed the five PF correctness tests, PF capacity/read-write experiments, the slotted/static storage tests, the three legacy AM tests and benchmarks, the G2 duplicate-boundary/ALL-scan regression, and the G3 root-capacity regression completing successfully. The separate AM experiment runner also includes the full Student bulk-loader regression for G1/G4.
+
+### 18.4 Clean generated build products
+
+The root cleanup target delegates to the three component Makefiles:
+
+```bash
+make clean
+```
+
+It removes compiled objects and test executables, PF scratch files, and generated AM index/test data from the component directories. It does not remove the consolidated experiment result directories under `toydb/experiments/storage/`. To inspect the exact commands before executing cleanup, use:
+
+```bash
+make -n clean
+```
+
+The component clean rules should be reviewed whenever new generated files are added. Source files, README files, CSV results, graph images, and analysis notes are not build products and should remain outside the clean rules.
+
+### 18.5 Validation snapshot
+
+The integrated regression log ends with:
+
+```text
+========================================
+ ALL TESTS COMPLETED
+========================================
+```
+
+The storage experiment reports 17,813 records verified and 454 PF-backed slotted pages. The AM boundary regression reports 257 expected and actual entries; the capacity regression accepts 341 children and rejects 342 without modifying the root. The PF result bundle records five PF correctness tests as passing, eight capacity/policy configurations, and ten read/write/policy workload rows. Detailed machine-readable results and figures are retained beside the experiment runners.
+
+---
+
+## 19. Project Limitations and Deferred Work
+
+1. **AM tree depth:** the sorted bulk loader builds leaf pages and one internal root. It safely rejects a root requiring more than 341 children; it does not yet construct additional internal levels.
+2. **G5 cleanup:** additional AM error-handling and the legacy `misc.c` format-string cleanup were intentionally deferred from the selected scope. Any remaining compiler warnings should be reviewed separately if the course submission requires warning-free compilation.
+3. **G6 RID content cross-check:** the test suite verifies known duplicate-key result counts and full index scans, while the storage tests verify their own RIDs against Student payloads. A dedicated end-to-end test that dereferences every AM-returned RID and rechecks its Student roll number was proposed but deferred.
+4. **PF generalization:** LRU/MRU comparisons use the specified short access sequence and five-page read/write workload, not a representative production trace. Policy rankings may reverse on a different trace.
+5. **AM benchmark scope:** the construction metric is end-to-end and the query benchmark uses one duplicate roll number. The measured differences should not be generalized to all keys or data distributions.
+6. **Storage performance scope:** the slotted/static comparison is a space-efficiency experiment; it does not claim lower CPU or latency for every operation.
+
+These limitations do not invalidate the tests that were run. They define the scope in which the reported results can be interpreted.
+
+---
+
+## 20. Overall Conclusion
+
+The project combines a PF file and buffer subsystem, two persistent Student storage organizations, and an AM indexing layer. The PF layer supplies page allocation, file operations, buffer residency, replacement, dirty writeback, and statistics. Slotted and static storage demonstrate two different ways to organize Student rows inside PF pages. The AM layer associates roll-number keys with the RIDs produced by Student storage and offers multiple construction paths and index scans.
+
+The supplied Student dataset contains 17,813 records and 1,759,011 bytes of payload. Slotted storage uses 454 pages with 94.59% payload utilization, outperforming the tested static configurations on the reported page-count and payload-utilization measures. The PF experiments show how capacity and replacement policy affect page I/O for the two specified access patterns. The AM experiments show end-to-end build times of 0.070, 0.070, and 0.050 seconds for one-shot, incremental, and sorted bulk loading, and median query times of 22, 28, and 23 microseconds for the selected duplicate-key equality search.
+
+The integrated test workflow completed PF, storage, and AM checks, including G1-G4 regression coverage through the AM automation and root test targets. The report preserves the distinction between validated behaviour, measured experiment results, and features intentionally outside the implemented scope. The resulting system is reproducible through the documented root Makefile targets and Python experiment runners, with CSV files and graphs retained as supporting evidence.
 ---
 
 ## Appendix A — Key constants and equations
@@ -758,13 +1185,33 @@ For the supplied variable-length Student dataset, slotted pages provide the best
 | Static pages required | `ceil(17,813 / slots_per_page)` |
 | Payload utilization | `payload_bytes / allocated_data_page_bytes × 100` |
 
-## Appendix B — Output artifacts
+## Appendix B — Storage output artifacts
 
-| Artifact | Purpose |
-|---|---|
-| `experiments/storage/generate_storage_comparison.py` | Runs tests and regenerates comparison artifacts |
-| `experiments/storage/storage_test_results.txt` | Captured C test output |
-| `experiments/storage/storage_comparison.csv` | Machine-readable result table and provenance |
-| `experiments/storage/storage_pages_comparison.png` | Allocated data-page graph |
-| `experiments/storage/storage_payload_utilization.png` | Payload-utilization graph |
-| `experiments/storage/storage_comparison_notes.md` | Generated concise interpretation |
+- `experiments/storage/generate_storage_comparison.py` — runs the storage tests and regenerates the storage comparison artifacts.
+- `experiments/storage/slotted_page/storage_test_results.txt` — captured storage C-test output.
+- `experiments/storage/slotted_page/storage_comparison.csv` — machine-readable storage measurements and provenance.
+- `experiments/storage/slotted_page/storage_pages_comparison.png` — allocated data-page comparison graph.
+- `experiments/storage/slotted_page/storage_payload_utilization.png` — payload-utilization comparison graph.
+- `experiments/storage/slotted_page/storage_comparison_notes.md` — generated storage interpretation.
+
+## Appendix C — PF and AM output artifacts
+
+### PF artifacts
+
+- `experiments/storage/run_pf_experiments.py` — runs PF correctness tests, capacity/replacement experiments, and read/write workloads.
+- `experiments/storage/pf_layer/pf_test_summary.csv` — PF correctness-test status and exit codes.
+- `experiments/storage/pf_layer/pf_experiment_results.csv` — LRU/MRU capacity experiment measurements.
+- `experiments/storage/pf_layer/pf_workload_results.csv` — read/write workload results.
+- `experiments/storage/pf_layer/*.png` — PF capacity, replacement-policy, and read/write graphs.
+- `experiments/storage/pf_layer/pf_experiment_analysis.txt` — generated PF observations and measurement notes.
+
+### AM artifacts
+
+- `experiments/storage/run_am_experiments.py` — runs legacy AM tests, G1-G4 regressions, and AM benchmarks.
+- `experiments/storage/am_layer/build_time.csv` — end-to-end construction timing for the three index methods.
+- `experiments/storage/am_layer/query_metrics.csv` — 90 raw duplicate-key query measurements.
+- `experiments/storage/am_layer/graphs/*.png` — AM construction, query latency, and page-access graphs.
+- `experiments/storage/am_layer/am_layer_notes.md` — generated AM summary and limitations.
+- `experiments/storage/requirements.txt` — Python experiment dependencies.
+
+The module-level design and reproduction instructions are maintained in `pflayer/README.md`, `amlayer/README.md`, and `slottedpage/README.md`.

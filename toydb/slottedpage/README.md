@@ -9,7 +9,7 @@ For the full design rationale, algorithms, test evidence, and experiment analysi
 
 Both implementations are integrated with the existing PF (Paged File) layer. The storage experiments use the supplied `data/student.txt` dataset and compare the number of PF data pages allocated and the fraction of those data-page bytes occupied by actual Student payload.
 
-> **Current scope:** The slotted-page and static-record storage implementations, PF integration, dataset validation, and storage comparison experiments are implemented and tested. The PF buffer-management implementation from the shared branch is integrated and its correctness tests have passed. PF performance-statistics graphs and the AM/B+ tree indexing work are separate remaining project deliverables; they are not represented as completed by this storage README.
+> **Current scope:** This README documents the slotted-page and static-record storage subsystem. Both formats are integrated with PF and are tested against the supplied Student dataset. The shared PF buffer manager and AM/B+ tree indexing work are also implemented and validated in the integrated project; see [`../pflayer/README.md`](../pflayer/README.md), [`../amlayer/README.md`](../amlayer/README.md), and the [master technical report](../Technical_Report.md) for those components.
 
 ---
 
@@ -27,9 +27,11 @@ DBMS_Project/
     │   ├── buf.c
     │   ├── hash.c
     │   ├── pf.h
-    │   └── pftypes.h
+    │   ├── pftypes.h
+    │   └── README.md           # PF buffer-manager design and experiments
     ├── amlayer/
-    │   └── ...                 # Existing AM layer; indexing work is tracked separately
+    │   ├── README.md           # AM/B+ tree design and regression coverage
+    │   └── AM_BENCHMARK_README.md
     ├── slottedpage/
     │   ├── slotted_page.c/.h
     │   ├── student_store.c/.h
@@ -43,11 +45,12 @@ DBMS_Project/
     └── experiments/
         └── storage/
             ├── generate_storage_comparison.py
-            ├── storage_test_results.txt
-            ├── storage_comparison.csv
-            ├── storage_pages_comparison.png
-            ├── storage_payload_utilization.png
-            └── storage_comparison_notes.md
+            ├── run_pf_experiments.py
+            ├── run_am_experiments.py
+            ├── requirements.txt
+            ├── pf_layer/       # PF CSV, workbook, notes and graphs
+            ├── am_layer/       # AM CSV, workbook, notes and graphs
+            └── slotted_page/   # Storage CSV, test output and graphs
 ```
 
 The Student dataset is located at `data/student.txt`, one directory above `toydb/`. The Makefile's default `STUDENT_FILE` is configured relative to `toydb/slottedpage`; override it when using a different checkout layout.
@@ -83,7 +86,7 @@ The two storage formats are alternatives: a particular Student file is created u
 
 ### PF buffer-manager configuration
 
-The PF implementation exposes `PFbufSetCapacity()` and `PFbufSetPolicy()`. `PF_LRU` and `PF_MRU` select the replacement policy; the default policy is LRU and the default capacity is `PF_MAX_BUFS` (20 frames). The statistics interface exposes logical reads/writes, physical reads/writes, and buffer hits. The final PF workload graphs and interpretation are tracked separately from the storage-space experiment.
+The PF implementation exposes `PFbufSetCapacity()` and `PFbufSetPolicy()`. `PF_LRU` and `PF_MRU` select the replacement policy; the default policy is LRU and the default capacity is `PF_MAX_BUFS` (20 frames). The statistics interface exposes logical reads/writes, physical reads/writes, and buffer hits. PF capacity and read/write workload results are documented in [`../pflayer/README.md`](../pflayer/README.md); they are separate from the storage-space metric reported here.
 
 ### PF page-file overhead
 
@@ -127,7 +130,7 @@ Page byte 0                                                     Byte 4095
 │ 12-byte page header │ 4-byte slot entries │ Packed variable-length     │
 │                     │ grows forward  ---> │ records  <---              │
 └─────────────────────┴─────────────────────┴────────────────────────────┘
-                      ^ free_start             free_end ^
+                      ^ free_start          ^ free_end
                          contiguous free region
 ```
 
@@ -366,13 +369,13 @@ For slotted pages, `reserved record bytes` equals the actual payload because eac
 
 **PF data pages allocated**
 
-![Data pages allocated](../experiments/storage/storage_pages_comparison.png)
+![Data pages allocated](../experiments/storage/slotted_page/storage_pages_comparison.png)
 
 **Payload utilization**
 
-![Payload utilization](../experiments/storage/storage_payload_utilization.png)
+![Payload utilization](../experiments/storage/slotted_page/storage_payload_utilization.png)
 
-The machine-readable measurements are in [`storage_comparison.csv`](../experiments/storage/storage_comparison.csv). The exact test output is in [`storage_test_results.txt`](../experiments/storage/storage_test_results.txt), and the generated summary is in [`storage_comparison_notes.md`](../experiments/storage/storage_comparison_notes.md).
+The machine-readable measurements are in [`storage_comparison.csv`](../experiments/storage/slotted_page/storage_comparison.csv). The exact test output is in [`storage_test_results.txt`](../experiments/storage/slotted_page/storage_test_results.txt), and the generated summary is in [`storage_comparison_notes.md`](../experiments/storage/slotted_page/storage_comparison_notes.md).
 
 The estimated PF file sizes, including the 4-byte per-page wrapper field and 8-byte file header, are:
 
@@ -407,14 +410,16 @@ These conclusions concern space allocation for the tested dataset. They do not e
 
 - Linux environment with a C compiler and `make`.
 - Python 3.
-- Matplotlib for graph generation.
 - The supplied `data/student.txt` file at the repository's `data/` path, unless another path is provided.
+- Matplotlib and OpenPyXL for the consolidated experiment tooling.
 
-On Ubuntu, Matplotlib can be installed with:
+From the repository root, create the shared experiment environment:
 
 ```bash
-sudo apt update
-sudo apt install python3-matplotlib
+python3 -m venv .venv
+source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -r toydb/experiments/storage/requirements.txt
 ```
 
 ### Run the complete storage comparison
@@ -481,10 +486,10 @@ Without `--keep`, the PF-backed static test removes its temporary database after
 
 ### Generated output locations
 
-All experiment outputs are written to:
+The unified storage experiment writes its result set to:
 
 ```text
-toydb/experiments/storage/
+toydb/experiments/storage/slotted_page/
 ```
 
 Do not edit the generated CSV or graphs manually. Rerun the script after changing the dataset, implementation, or experiment code so that all outputs remain consistent.
@@ -507,20 +512,27 @@ The completed storage implementation has been exercised at page level, through P
 
 The storage comparison run after integration with the shared PF changes completed successfully. The PF-backed slotted page count and in-memory page count were both 454.
 
-## 11. Scope boundaries and remaining project work
+## 11. Integrated project status and scope boundaries
 
-This README documents the completed storage subsystem and its reproducible storage-space experiment. It does not claim the entire DBMS assignment is finished.
+This README focuses on page storage. In the integrated project:
 
-Separate project deliverables still tracked outside this storage component include:
+- The PF layer provides configurable buffer capacity, LRU/MRU replacement, dirty-page writeback, statistics, and automated capacity/read-write experiments. See [`../pflayer/README.md`](../pflayer/README.md).
+- The AM layer supports one-shot, incremental, and sorted bulk index construction, duplicate-key grouping, root capacity validation, dynamic leftmost-leaf discovery, and index benchmarks. See [`../amlayer/README.md`](../amlayer/README.md).
+- The master report combines all three subsystems and records the integrated test results: [`../Technical_Report.md`](../Technical_Report.md).
 
-- PF performance-statistics collection and final PF graphs for the buffer-capacity and LRU/MRU workloads.
-- AM/B+ tree work: existing-file index construction, incremental insertion validation, sorted bulk loading, internal-level/root construction, duplicate-key correctness, search validation, and index benchmarking.
-- Final cross-component integration, complete report update, and submission packaging.
+The AM bulk loader currently supports one internal root above the leaf level; multi-level internal-tree construction is not implemented. The additional G5 cleanup and dedicated G6 RID-to-Student payload cross-check were deferred. These scope limits do not change the storage results documented in this README.
 
-The PF buffer layer supports configurable capacity and LRU/MRU selection, and its correctness tests have passed. Its final performance analysis and plots are separate from the storage-space measurements in this README.
+---
 
 ## 12. Summary
 
 The implemented slotted-page and static-record stores both persist Student records through the PF layer and support RID-based retrieval and sequential scanning. On the supplied 17,813-record Student dataset, slotted pages use 454 PF data pages and achieve 94.59% payload utilization. The best tested static configuration, `M=108`, uses 482 pages and achieves 89.10%; larger static maximum lengths increase padding and page consumption.
 
 The unified experiment runner makes the comparison reproducible by running the C tests, extracting their measured outputs, validating the accounting, and regenerating the results table and graphs.
+
+
+## 13. Relationship to the other modules
+
+The same integer RID representation is used by slotted/static Student storage and the AM layer. The storage layer produces a page/slot RID; the AM leaf stores that RID under the roll-number key. This README describes how the physical record is stored, while the AM README describes how the key-to-RID index is built and searched.
+
+For the complete PF, storage, and AM architecture, experiment results, and root-level build/test workflow, see [`../Technical_Report.md`](../Technical_Report.md).
