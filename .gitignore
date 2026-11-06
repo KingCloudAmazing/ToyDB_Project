@@ -1,3 +1,52 @@
 *.o
 a.out
 testrel.*
+.DS_Store
+.venv/
+__pycache__/
+
+# Operating system and Python
+*.py[cod]
+
+# PF generated executables and test files
+/toydb/pflayer/testhash
+/toydb/pflayer/testpf
+/toydb/pflayer/testbuf
+/toydb/pflayer/teststats
+/toydb/pflayer/testlru
+/toydb/pflayer/testexperiment
+/toydb/pflayer/testworkload
+/toydb/pflayer/file1
+/toydb/pflayer/file2
+/toydb/pflayer/testbuf_file
+/toydb/pflayer/teststats_file
+/toydb/pflayer/testlru_file
+/toydb/pflayer/testexperiment_file
+/toydb/pflayer/testworkload_file
+/toydb/pflayer/pf_experiments/
+
+# AM generated executables and temporary databases
+/toydb/amlayer/test1
+/toydb/amlayer/test2
+/toydb/amlayer/test3
+/toydb/amlayer/test_student_am
+/toydb/amlayer/test_student_am_bulk
+/toydb/amlayer/test_student_am_incremental
+/toydb/amlayer/benchmark_am_queries
+/toydb/amlayer/benchmark_results/
+/toydb/amlayer/bulk_load_g1_test.log
+/toydb/amlayer/*.0
+/toydb/amlayer/*.1
+/toydb/amlayer/student_*_records.dat
+
+# Slotted-page generated executables
+/toydb/slottedpage/test_slotted
+/toydb/slottedpage/test_student_dataset
+/toydb/slottedpage/test_slotted_phase2
+/toydb/slottedpage/test_pf_integration
+/toydb/slottedpage/test_pf_phase3
+/toydb/slottedpage/test_student_pf
+/toydb/slottedpage/test_student_scan
+/toydb/slottedpage/test_student_scan_dataset
+/toydb/slottedpage/test_static_page
+/toydb/slottedpage/test_static_pf

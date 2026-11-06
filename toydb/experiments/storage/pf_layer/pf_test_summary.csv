@@ -1,0 +1,6 @@
+test,status,exit_code
+testhash,PASS,0
+testpf,PASS,0
+testbuf,PASS,0
+teststats,PASS,0
+testlru,PASS,0

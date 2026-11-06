@@ -1,5 +1,7 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <errno.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include "pf.h"
 #include "pftypes.h"
@@ -161,6 +163,11 @@ int main()
     FILE *csv;
 
     PF_Init();
+
+    if (mkdir("pf_experiments", 0755) < 0 && errno != EEXIST) {
+        printf("FAILED: could not create output directory: pf_experiments\n");
+        return 1;
+    }
 
     csv = fopen(RESULT_FILE, "w");
 

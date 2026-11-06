@@ -33,6 +33,11 @@ from statistics import median
 
 
 LEGACY_TESTS = ["test1", "test2", "test3"]
+STUDENT_REGRESSION_TESTS = [
+    ([], "Student bulk-loader full-dataset regression (G1/G4)"),
+    (["--boundary-test"], "duplicate-boundary regression (G2/G4)"),
+    (["--capacity-test"], "internal-root capacity regression (G3)"),
+]
 PROJECT_DIRS = [
     Path("toydb/amlayer"),
     Path("toydb/pflayer"),
@@ -225,6 +230,8 @@ def create_notes(output_dir, build_rows, query_rows):
         "## Automated workflow",
         "",
         "- Legacy AM correctness tests: test1, test2 and test3.",
+        "- Student bulk-loader regressions: full-dataset duplicate searches (G1),",
+        "  synthetic duplicate boundary (G2), root capacity (G3), and ALL scan (G4).",
         "- B+ tree construction using one-shot insertion.",
         "- B+ tree construction using incremental insertion.",
         "- B+ tree construction using sorted-file bulk loading.",
@@ -350,6 +357,18 @@ def main():
             )
 
         run(
+            ["make", "-f", "makefile", "test_student_am_bulk"],
+            temp_am,
+            "Build Student bulk-loader regression tests",
+        )
+        for arguments, description in STUDENT_REGRESSION_TESTS:
+            run(
+                ["./test_student_am_bulk", *arguments],
+                temp_am,
+                description,
+            )
+
+        run(
             ["bash", "run_am_benchmarks.sh"],
             temp_am,
             "B+ tree construction and query benchmarks",
@@ -384,9 +403,9 @@ def main():
     validate_results(output_dir, require_generated=True)
 
     print("\n========================================")
-    print(" ALL AM TESTS AND BENCHMARKS PASSED")
+    print(" ALL AM CORRECTNESS TESTS AND BENCHMARKS PASSED")
     print("========================================")
-    print("Correctness tests: 3/3 passed")
+    print("Correctness tests: 6/6 passed (3 legacy + 3 bulk-loader regressions)")
     print("Construction methods: 3 completed")
     print("Query measurements: 90 (30 per method)")
     print("Generated CSV, Excel, graphs and notes. No log files were generated.")

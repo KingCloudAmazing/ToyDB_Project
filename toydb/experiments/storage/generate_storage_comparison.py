@@ -23,7 +23,8 @@ The script automatically:
 8. Extracts actual measurements from the C test output.
 9. Validates record counts and storage accounting.
 10. Generates a CSV, two graphs and a Markdown summary in slotted_page/.
-11. Saves outputs in experiments/storage/slotted_page/.\n12. Skips validated existing results unless --force is supplied.
+11. Saves outputs in experiments/storage/slotted_page/.
+12. Skips validated existing results unless --force is supplied.
 
 No page counts or storage measurements are hardcoded.
 """
@@ -879,7 +880,7 @@ python3 generate_storage_comparison.py
 """
 
     notes_path = OUTPUT_DIR / "storage_comparison_notes.md"
-    notes_path.write_text(content + "\\n", encoding="utf-8")
+    notes_path.write_text(content + "\n", encoding="utf-8")
 
 
 def main():

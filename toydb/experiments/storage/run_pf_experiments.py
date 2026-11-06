@@ -190,6 +190,44 @@ def generate_graphs(output_dir, capacity_rows):
     plt.close(fig)
 
 
+def generate_workload_graphs(output_dir, workload_rows):
+    """Plot physical reads and writes for each read/write workload mix."""
+    try:
+        import matplotlib
+        matplotlib.use("Agg")
+        import matplotlib.pyplot as plt
+    except ImportError as exc:
+        raise RuntimeError(
+            "Matplotlib is required to generate graphs. Install it with: "
+            "python3 -m pip install matplotlib"
+        ) from exc
+
+    workload_order = ["100R_0W", "75R_25W", "50R_50W", "25R_75W", "0R_100W"]
+    policies = ["LRU", "MRU"]
+
+    for metric, filename, title, ylabel in [
+        ("physical_reads", "workload_physical_reads.png",
+         "Physical Reads by Read/Write Workload", "Physical reads"),
+        ("physical_writes", "workload_physical_writes.png",
+         "Physical Writes by Read/Write Workload", "Physical writes"),
+    ]:
+        fig, ax = plt.subplots()
+        for policy in policies:
+            rows_by_workload = {row["workload"]: row for row in workload_rows
+                                if row["policy"] == policy}
+            values = [int(rows_by_workload[name][metric]) for name in workload_order]
+            ax.plot(workload_order, values, marker="o", label=policy)
+
+        ax.set_title(title)
+        ax.set_xlabel("Read/write workload")
+        ax.set_ylabel(ylabel)
+        ax.grid(True, alpha=0.3)
+        ax.legend()
+        fig.tight_layout()
+        fig.savefig(output_dir / filename, dpi=160)
+        plt.close(fig)
+
+
 def generate_excel(output_dir, test_summary, capacity_rows, workload_rows):
     """Create a workbook containing correctness and experiment results."""
     try:
@@ -347,6 +385,8 @@ tracked test executables or create build files in the repository.
 - `capacity_vs_physical_reads.png`
 - `capacity_vs_hit_ratio.png`
 - `lru_vs_mru_comparison.png`
+- `workload_physical_reads.png`
+- `workload_physical_writes.png`
 - `pf_experiment_analysis.txt`
 
 The workload's `logical_reads` column counts `PF_GetThisPage` calls. Since the
@@ -506,6 +546,7 @@ def main():
         )
 
     generate_graphs(output_dir, capacity_rows)
+    generate_workload_graphs(output_dir, workload_rows)
     generate_analysis(output_dir, capacity_rows, workload_rows)
     generate_excel(output_dir, test_summary, capacity_rows, workload_rows)
     generate_readme(output_dir)

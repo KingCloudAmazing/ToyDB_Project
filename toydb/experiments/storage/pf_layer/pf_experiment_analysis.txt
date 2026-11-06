@@ -1,0 +1,45 @@
+PF BUFFER MANAGER EXPERIMENT ANALYSIS
+Generated: 2026-11-06T14:36:03+05:30
+
+1. CAPACITY AND REPLACEMENT-POLICY EXPERIMENT
+Page-access sequence: 0, 1, 2, 3, 0, 1, 4, 0, 1, 2, 3, 4
+Policies: LRU and MRU
+Capacities: 2, 4, 8 and 16 pages
+
+Results:
+- LRU, capacity 2: 12 physical reads, 0 hits, 0.0% hit ratio.
+- LRU, capacity 4: 8 physical reads, 4 hits, 33.33% hit ratio.
+- LRU, capacity 8: 5 physical reads, 7 hits, 58.33% hit ratio.
+- LRU, capacity 16: 5 physical reads, 7 hits, 58.33% hit ratio.
+- MRU, capacity 2: 10 physical reads, 2 hits, 16.67% hit ratio.
+- MRU, capacity 4: 6 physical reads, 6 hits, 50.0% hit ratio.
+- MRU, capacity 8: 5 physical reads, 7 hits, 58.33% hit ratio.
+- MRU, capacity 16: 5 physical reads, 7 hits, 58.33% hit ratio.
+
+Observations:
+- Increasing capacity reduces physical reads for this access sequence until the five distinct pages can be retained.
+- LRU and MRU results depend on the access sequence; these measurements do not establish that one policy is generally better.
+- Physical writes are zero in this experiment because it only reads pages.
+
+2. READ/WRITE WORKLOAD EXPERIMENT
+Each workload performs 20 page operations over five pages with a three-page buffer.
+
+Results:
+- 100R_0W / LRU: 20 read operations, 0 write operations; 20 physical reads, 0 physical writes, 0 hits, 0.00% hit ratio.
+- 100R_0W / MRU: 20 read operations, 0 write operations; 12 physical reads, 0 physical writes, 8 hits, 40.00% hit ratio.
+- 75R_25W / LRU: 15 read operations, 5 write operations; 20 physical reads, 5 physical writes, 0 hits, 0.00% hit ratio.
+- 75R_25W / MRU: 15 read operations, 5 write operations; 12 physical reads, 5 physical writes, 8 hits, 40.00% hit ratio.
+- 50R_50W / LRU: 10 read operations, 10 write operations; 20 physical reads, 10 physical writes, 0 hits, 0.00% hit ratio.
+- 50R_50W / MRU: 10 read operations, 10 write operations; 12 physical reads, 10 physical writes, 8 hits, 40.00% hit ratio.
+- 25R_75W / LRU: 5 read operations, 15 write operations; 20 physical reads, 15 physical writes, 0 hits, 0.00% hit ratio.
+- 25R_75W / MRU: 5 read operations, 15 write operations; 12 physical reads, 11 physical writes, 8 hits, 40.00% hit ratio.
+- 0R_100W / LRU: 0 read operations, 20 write operations; 20 physical reads, 20 physical writes, 0 hits, 0.00% hit ratio.
+- 0R_100W / MRU: 0 read operations, 20 write operations; 12 physical reads, 12 physical writes, 8 hits, 40.00% hit ratio.
+
+Measurement note:
+- logical_reads counts calls to PF_GetThisPage. The workload calls PF_GetThisPage once for every operation, including operations that subsequently modify the page.
+- read_operations and write_operations describe the intended workload mix; they are not the same as logical_reads and logical_writes.
+- logical_writes counts dirty unfix operations.
+- Workload physical-write statistics are collected after closing the file, so dirty-page flushes on close are included.
+
+These results describe only the tested workloads and configuration.
