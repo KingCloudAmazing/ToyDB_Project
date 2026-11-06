@@ -55,4 +55,5 @@ int numrec;	/* # of records retrieved in s scan */
 	xAM_DestroyIndex(RELNAME,0);
 
 	printf("test2 done!\n");
+	return(0);
 }

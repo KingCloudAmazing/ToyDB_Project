@@ -14,7 +14,7 @@ Run from the repository root:
 The script automatically:
 
 1. Locates the Student dataset.
-2. Cleans previous test executables.
+2. Builds and runs the complete Slotted Page Makefile test suite in a temporary copy.
 3. Runs the in-memory slotted-page dataset test.
 4. Runs PF-backed slotted-page tests.
 5. Runs the static-page tests.
@@ -22,7 +22,9 @@ The script automatically:
 7. Saves complete test output.
 8. Extracts actual measurements from the C test output.
 9. Validates record counts and storage accounting.
-10. Generates a CSV, two graphs and a Markdown summary.
+10. Generates a CSV, two graphs and a Markdown summary in slotted_page/.
+11. Saves outputs in experiments/storage/slotted_page/.
+12. Skips validated existing results unless --force is supplied.
 
 No page counts or storage measurements are hardcoded.
 """
@@ -33,6 +35,8 @@ import math
 import re
 import subprocess
 import sys
+import shutil
+import tempfile
 from pathlib import Path
 
 # ------------------------------------------------------------
@@ -60,7 +64,16 @@ SLOTTEDPAGE_DIR = TOYDB_DIR / "slottedpage"
 
 DEFAULT_STUDENT_FILE = REPO_ROOT / "data" / "student.txt"
 
-RESULTS_LOG = SCRIPT_DIR / "storage_test_results.txt"
+OUTPUT_DIR = SCRIPT_DIR / "slotted_page"
+RESULTS_LOG = OUTPUT_DIR / "storage_test_results.txt"
+
+OUTPUT_FILES = [
+    "storage_test_results.txt",
+    "storage_comparison.csv",
+    "storage_pages_comparison.png",
+    "storage_payload_utilization.png",
+    "storage_comparison_notes.md",
+]
 
 
 # ------------------------------------------------------------
@@ -152,69 +165,73 @@ def read_dataset_stats(student_file):
 # ------------------------------------------------------------
 
 def run_storage_tests(student_file):
+    """
+    Build and run Slotted Page tests in a temporary mirror of toydb/.
 
+    This avoids deleting or overwriting executables and generated database
+    files in the user's actual toydb/slottedpage and toydb/pflayer folders.
+    """
     if not SLOTTEDPAGE_DIR.exists():
         fail(f"Cannot locate: {SLOTTEDPAGE_DIR}")
+
+    pf_source_dir = TOYDB_DIR / "pflayer"
+    if not pf_source_dir.exists():
+        fail(f"Cannot locate PF dependency: {pf_source_dir}")
 
     print("\n========================================")
     print("TOYDB STORAGE EXPERIMENT")
     print("========================================")
-
     print(f"Student dataset: {student_file}")
-
-    commands = [
-        ["make", "clean"],
-
-        [
-            "make",
-            f"STUDENT_FILE={student_file}",
-            "test-student",
-            "test-student-pf",
-            "test-scan-dataset",
-            "test-static-page",
-            "test-static-pf-all"
-        ]
-    ]
+    print("Building and running tests in a temporary copy.")
 
     complete_output = []
 
-    for command in commands:
+    with tempfile.TemporaryDirectory(prefix="toydb_storage_experiments_") as temp_name:
+        temp_toydb = Path(temp_name) / "toydb"
+        temp_slotted_dir = temp_toydb / "slottedpage"
+        temp_pf_dir = temp_toydb / "pflayer"
 
-        print("\nExecuting:", " ".join(command))
-
-        result = subprocess.run(
-            command,
-            cwd=SLOTTEDPAGE_DIR,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            text=True
+        ignore = shutil.ignore_patterns(
+            ".DS_Store", "__MACOSX", "__pycache__", "*.o", "*.pyc",
+            "a.out", "test_slotted", "test_student_dataset",
+            "test_slotted_phase2", "test_pf_integration", "test_pf_phase3",
+            "test_student_pf", "test_student_scan",
+            "test_student_scan_dataset", "test_static_page", "test_static_pf",
         )
+        shutil.copytree(SLOTTEDPAGE_DIR, temp_slotted_dir, ignore=ignore)
+        shutil.copytree(pf_source_dir, temp_pf_dir, ignore=ignore)
 
-        complete_output.append(
-            "$ " + " ".join(command) + "\n"
-        )
+        commands = [
+            ["make", "clean"],
+            ["make", f"STUDENT_FILE={student_file}", "test"],
+        ]
 
-        complete_output.append(result.stdout)
-
-        print(result.stdout)
-
-        if result.returncode != 0:
-
-            RESULTS_LOG.write_text(
-                "\n".join(complete_output),
-                encoding="utf-8"
+        for command in commands:
+            print("\nExecuting:", " ".join(command))
+            result = subprocess.run(
+                command,
+                cwd=temp_slotted_dir,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                errors="replace",
             )
 
-            fail(
-                f"Command failed with exit code "
-                f"{result.returncode}. See {RESULTS_LOG}"
-            )
+            complete_output.append("$ " + " ".join(command) + "\n")
+            complete_output.append(result.stdout)
+            print(result.stdout)
 
-    RESULTS_LOG.write_text(
-        "\n".join(complete_output),
-        encoding="utf-8"
-    )
+            if result.returncode != 0:
+                RESULTS_LOG.write_text(
+                    "\n".join(complete_output),
+                    encoding="utf-8",
+                )
+                fail(
+                    f"Command failed with exit code {result.returncode}. "
+                    f"See {RESULTS_LOG}"
+                )
 
+    RESULTS_LOG.write_text("\n".join(complete_output), encoding="utf-8")
     return "\n".join(complete_output)
 
 
@@ -715,7 +732,7 @@ def generate_graphs(rows):
     fig.tight_layout()
 
     fig.savefig(
-        SCRIPT_DIR / "storage_pages_comparison.png",
+        OUTPUT_DIR / "storage_pages_comparison.png",
         dpi=180,
         bbox_inches="tight"
     )
@@ -751,7 +768,7 @@ def generate_graphs(rows):
     fig.tight_layout()
 
     fig.savefig(
-        SCRIPT_DIR / "storage_payload_utilization.png",
+        OUTPUT_DIR / "storage_payload_utilization.png",
         dpi=180,
         bbox_inches="tight"
     )
@@ -804,7 +821,7 @@ def generate_markdown(rows, dataset_stats):
             f"| {row['estimated_pf_file_size_bytes']:,} bytes |"
         )
 
-    content = f"""# Storage Comparison: Slotted Pages vs. Static Records
+    content = f"""# Slotted Page Notes: Slotted Pages vs. Static Records
 
 ## Dataset
 
@@ -859,11 +876,16 @@ From this directory:
 
 ```bash
 python3 generate_storage_comparison.py
+# Add --force to rerun and replace existing results.
 """
+
+    notes_path = OUTPUT_DIR / "storage_comparison_notes.md"
+    notes_path.write_text(content + "\n", encoding="utf-8")
+
 
 def main():
     parser = argparse.ArgumentParser(
-    description="Run and summarize ToyDB storage experiments."
+    description="Run and summarize ToyDB Slotted Page storage experiments."
     )
 
     parser.add_argument(
@@ -873,14 +895,61 @@ def main():
         help="Path to student.txt"
     )
 
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Rerun all tests and regenerate the Slotted Page results."
+    )
+
     args = parser.parse_args()
 
     student_file = args.student_file.expanduser().resolve()
 
-    SCRIPT_DIR.mkdir(
+    OUTPUT_DIR.mkdir(
         parents=True,
         exist_ok=True
     )
+
+    existing_results = all(
+        (OUTPUT_DIR / filename).is_file()
+        and (OUTPUT_DIR / filename).stat().st_size > 0
+        for filename in OUTPUT_FILES
+    )
+
+    if existing_results:
+        try:
+            with (OUTPUT_DIR / "storage_comparison.csv").open(
+                newline="", encoding="utf-8"
+            ) as csv_file:
+                saved_rows = list(csv.DictReader(csv_file))
+            existing_results = (
+                len(saved_rows) == 6
+                and all(
+                    row.get("configuration")
+                    for row in saved_rows
+                )
+                and "Slotted pages" in {
+                    row["configuration"] for row in saved_rows
+                }
+                and "Static M=256" in {
+                    row["configuration"] for row in saved_rows
+                }
+            )
+            notes = (OUTPUT_DIR / "storage_comparison_notes.md").read_text(
+                encoding="utf-8"
+            )
+            existing_results = existing_results and (
+                "## Results" in notes and "## Measurement notes" in notes
+            )
+        except (OSError, csv.Error, KeyError):
+            existing_results = False
+
+    if existing_results and not args.force:
+        print("Existing Slotted Page results are present.")
+        print("Skipping tests and result generation.")
+        print(f"Results: {OUTPUT_DIR}")
+        print("Use --force to regenerate all results.")
+        return
 
     # 1. Read actual dataset statistics.
     dataset_stats = read_dataset_stats(student_file)
@@ -926,7 +995,7 @@ def main():
     # 6. Generate CSV.
     generate_csv(
         rows,
-        SCRIPT_DIR / "storage_comparison.csv"
+        OUTPUT_DIR / "storage_comparison.csv"
     )
 
     # 7. Generate graphs.
@@ -957,10 +1026,10 @@ def main():
 
     generated_files = [
         RESULTS_LOG,
-        SCRIPT_DIR / "storage_comparison.csv",
-        SCRIPT_DIR / "storage_pages_comparison.png",
-        SCRIPT_DIR / "storage_payload_utilization.png",
-        SCRIPT_DIR / "storage_comparison_notes.md"
+        OUTPUT_DIR / "storage_comparison.csv",
+        OUTPUT_DIR / "storage_pages_comparison.png",
+        OUTPUT_DIR / "storage_payload_utilization.png",
+        OUTPUT_DIR / "storage_comparison_notes.md"
     ]
 
     for file in generated_files:

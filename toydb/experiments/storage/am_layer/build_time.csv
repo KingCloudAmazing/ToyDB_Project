@@ -1,0 +1,4 @@
+method,build_seconds
+one_shot,0.07
+incremental,0.07
+bulk_load,0.05

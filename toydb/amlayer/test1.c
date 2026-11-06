@@ -81,4 +81,5 @@ int numrec;		/* # of records retrieved*/
 	xAM_DestroyIndex(RELNAME,RECVAL_INDEXNO);
 
 	printf("test1 done!\n");
+	return(0);
 }

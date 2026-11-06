@@ -3,19 +3,60 @@ $ make clean
 rm -f test_slotted test_student_dataset test_slotted_phase2 test_pf_integration test_pf_phase3 test_student_pf test_student_scan test_student_scan_dataset \
 	test_static_page test_static_pf
 
-$ make STUDENT_FILE=/home/vijna/Desktop/DBMS/DBMS_Project/data/student.txt test-student test-student-pf test-scan-dataset test-static-page test-static-pf-all
+$ make STUDENT_FILE=/home/vijna/Desktop/DBMS/DBMS_Project/data/student.txt test
 
+cc -std=c99 -Wall -Wextra -Wpedantic -O2  slotted_page.c test_slotted.c -o test_slotted
+./test_slotted
+PASS: initialization, metadata, variable-length insertion, and retrieval
+      records=3, free_space=3808 bytes
+PASS: invalid inputs, page-full handling, and full-page retrieval
+      100-byte records fit per page: 39
+
+ALL SLOTTED-PAGE PHASE 1 TESTS PASSED
 cc -std=c99 -Wall -Wextra -Wpedantic -O2  slotted_page.c test_student_dataset.c -o test_student_dataset
 ./test_student_dataset "/home/vijna/Desktop/DBMS/DBMS_Project/data/student.txt"
 PASS: Student dataset in-memory slotted-page round trip
       Student records verified : 17813
       Slotted pages used       : 454
       Average records per page : 39.24
+cc -std=c99 -Wall -Wextra -Wpedantic -O2  slotted_page.c test_slotted_phase2.c -o test_slotted_phase2
+./test_slotted_phase2
+PASS: deletion and metadata counts
+PASS: deleted-slot reuse without compaction
+PASS: explicit compaction and stable slots
+PASS: automatic compaction and retry
+PASS: oversized record rejection
+PASS: exact-fit and full-page boundary
+PASS: overlapping-record corruption detection
+
+7/7 Phase 2 tests passed.
+cc -std=c99 -Wall -Wextra -Wpedantic -O2 -std=gnu89 -D_DEFAULT_SOURCE -fno-builtin -w -I../pflayer slotted_page.c student_store.c ../pflayer/pf.c ../pflayer/buf.c ../pflayer/hash.c test_pf_integration.c -o test_pf_integration
+./test_pf_integration
+PASS: PF-backed slotted-page file creation and page allocation
+PASS: insert and RID-based retrieval across multiple PF pages
+PASS: close/reopen persistence and append-page recovery
+PF integration tests verified 250 records plus one reopened append
+cc -std=c99 -Wall -Wextra -Wpedantic -O2 -std=gnu89 -D_DEFAULT_SOURCE -fno-builtin -w -I../pflayer slotted_page.c student_store.c ../pflayer/pf.c ../pflayer/buf.c ../pflayer/hash.c test_pf_phase3.c -o test_pf_phase3
+./test_pf_phase3
+PASS: PF-backed insertion and RID-based retrieval
+PASS: PF-backed logical deletion and explicit compaction
+PASS: deletion and compaction persist across close/reopen
+PASS: deleted slot and RID are reused after reopening
+PF Phase 3 mutation/persistence test passed
 cc -std=c99 -Wall -Wextra -Wpedantic -O2 -std=gnu89 -D_DEFAULT_SOURCE -fno-builtin -w -I../pflayer slotted_page.c student_store.c ../pflayer/pf.c ../pflayer/buf.c ../pflayer/hash.c test_student_pf.c -o test_student_pf
 ./test_student_pf "/home/vijna/Desktop/DBMS/DBMS_Project/data/student.txt"
 PASS: PF-backed Student dataset insert/close/reopen/retrieve
 Student records verified : 17813
 PF pages allocated       : 454
+cc -std=c99 -Wall -Wextra -Wpedantic -O2 -std=gnu89 -D_DEFAULT_SOURCE -fno-builtin -w -I../pflayer slotted_page.c student_store.c ../pflayer/pf.c ../pflayer/buf.c ../pflayer/hash.c test_student_scan.c -o test_student_scan
+./test_student_scan
+PASS: empty PF file sequential scan
+PASS: multi-page sequential scan and RID/record verification
+PASS: deleted slots skipped after deletion and compaction
+PASS: scan survives close/reopen
+PASS: callback-controlled early termination
+Scanned live records: 246 of 250 inserted (4 deleted)
+Phase 4 synthetic sequential-scan test passed
 cc -std=c99 -Wall -Wextra -Wpedantic -O2 -std=gnu89 -D_DEFAULT_SOURCE -fno-builtin -w -I../pflayer slotted_page.c student_store.c ../pflayer/pf.c ../pflayer/buf.c ../pflayer/hash.c test_student_scan_dataset.c -o test_student_scan_dataset
 ./test_student_scan_dataset "/home/vijna/Desktop/DBMS/DBMS_Project/data/student.txt"
 PASS: PF-backed sequential scan of the supplied Student dataset
